@@ -137,7 +137,7 @@ def init_db():
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # 기존 테이블 생성 쿼리
+        # trades 테이블 생성
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS trades
         (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,14 +150,27 @@ def init_db():
          btc_avg_buy_price REAL,
          btc_krw_price REAL,
          success INTEGER,
-         reflection TEXT)
+         reflection TEXT,
+         daily_profit REAL,
+         total_profit REAL,
+         total_assets_krw REAL,
+         cumulative_reflection TEXT)
         ''')
         
-        # 새로운 컬럼 추가
+        # reflection_summary 테이블 생성
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reflection_summary
+        (id INTEGER PRIMARY KEY AUTOINCREMENT,
+         summary TEXT,
+         timestamp TEXT)
+        ''')
+        
+        # 새로운 컬럼 추가 (이미 존재하는 경우 무시)
         columns_to_add = [
             ('daily_profit', 'REAL'),
             ('total_profit', 'REAL'),
-            ('total_assets_krw', 'REAL')
+            ('total_assets_krw', 'REAL'),
+            ('cumulative_reflection', 'TEXT')
         ]
         
         for column_name, column_type in columns_to_add:
@@ -175,7 +188,7 @@ def init_db():
         raise
 
 # 거래 이터 저장 함수 수정
-def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None):
+def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
     
@@ -197,9 +210,9 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
     
     try:
         cursor.execute('''
-        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw))
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection))
         conn.commit()
         logging.info(f"Trade saved successfully: {decision}, {success}")
     except sqlite3.Error as e:
@@ -354,29 +367,15 @@ def get_news():
 # 새로운 함수 추가
 def get_reflection_summary(conn):
     cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
-        result = cursor.fetchone()
-        return result[0] if result else "Initial trading. No previous reflections available."
-    except sqlite3.OperationalError as e:
-        if "no such column: reflection_summary" in str(e):
-            logging.warning("reflection_summary table not found. Creating it now.")
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reflection_summary
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             summary TEXT,
-             timestamp TEXT DEFAULT CURRENT_TIMESTAMP)
-            ''')
-            conn.commit()
-            return "Initial trading. No previous reflections available."
-        else:
-            raise
+    cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
+    result = cursor.fetchone()
+    return result[0] if result else None
 
 def update_reflection_summary(conn, new_reflection, previous_summary):
     client = OpenAI()
     
     if previous_summary:
-        prompt = f"Previous summary: {previous_summary}\n\nNew reflection: {new_reflection}\n\nCreate an updated summary that incorporates the new reflection into the previous summary. The summary should be concise but capture key insights and trends."
+        prompt = f"Previous summary: {previous_summary}\n\nNew reflection to incorporate: {new_reflection}\n\nCreate an updated summary that incorporates the new reflection into the previous summary. The summary should maintain key insights from the previous summary while adding new insights from the latest reflection. Keep the summary concise but insightful."
     else:
         prompt = f"Create a summary of the following reflection: {new_reflection}"
     
@@ -399,7 +398,7 @@ def update_reflection_summary(conn, new_reflection, previous_summary):
 
 # ai_trading 함수 수정
 def ai_trading():
-    # OpenAI ��라이언트 초기화
+    # OpenAI 라��� 초기화
     client = OpenAI()
 
     # 필요한 데이터 수집
@@ -415,8 +414,8 @@ def ai_trading():
     conn = init_db()
 
     try:
-        # 최근 5개의 거래 데이터 가져오기
-        recent_trades = get_recent_trades(conn, days=7, limit=5)
+        # 최근 10개의 거래 데이터 가져오기
+        recent_trades = get_recent_trades(conn, limit=10)
         
         # 성능 분석
         current_price = pyupbit.get_current_price("KRW-BTC")
@@ -429,10 +428,15 @@ def ai_trading():
         previous_summary = get_reflection_summary(conn)
         
         # 반성 생성
-        reflection = generate_reflection(performance, strategies, recent_trades, avg_profit, previous_summary)
-        
-        # 반성 요약 업데이트
-        updated_summary = update_reflection_summary(conn, reflection, previous_summary)
+        if len(recent_trades) >= 5:
+            last_five_trades = recent_trades[:5]
+            reflection = generate_reflection(performance, strategies, last_five_trades, avg_profit, [])
+            
+            # 반성 요약 업데이트
+            updated_summary = update_reflection_summary(conn, reflection, previous_summary)
+        else:
+            reflection = generate_reflection(performance, strategies, recent_trades, avg_profit, [])
+            updated_summary = update_reflection_summary(conn, reflection, previous_summary)
         
         # 시스템 메시지에 반성 내용 추가
         system_message = f"You are an AI trading assistant. Analyze the given market data and make a trading decision. Consider the following reflection summary on recent performance:\n\n{updated_summary}"
@@ -534,7 +538,8 @@ def ai_trading():
                            upbit.get_avg_buy_price("KRW-BTC"), 
                            updated_status['btc_price'],
                            success=True,
-                           reflection=reflection)  # 여기에 reflection 추가
+                           reflection=reflection,
+                           cumulative_reflection=updated_summary)  # 여기에 cumulative_reflection 추가
 
                 logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
             except Exception as trade_error:
@@ -559,7 +564,9 @@ def ai_trading():
                        current_status['krw_balance'], 
                        upbit.get_avg_buy_price("KRW-BTC"), 
                        current_status['btc_price'],
-                       success=True)
+                       success=True,
+                       reflection=reflection,
+                       cumulative_reflection=updated_summary)  # 여기에 cumulative_reflection 추가
 
     except Exception as e:
         logging.error(f"Error in ai_trading: {str(e)}")
@@ -570,10 +577,11 @@ def ai_trading():
                        str(e), 
                        current_status['btc_balance'], 
                        current_status['krw_balance'], 
-                       upbit.get_avg_buy_price("KRW-BTC") or 0,  # None 대신 0 사용
+                       upbit.get_avg_buy_price("KRW-BTC") or 0,
                        current_status['btc_price'],
                        success=False,
-                       reflection="Error in ai_trading function")
+                       reflection="Error in ai_trading function",
+                       cumulative_reflection="Error occurred during trading")
     finally:
         if 'conn' in locals():
             conn.close()
@@ -600,7 +608,7 @@ def calculate_trading_interval(volatility, volume):
     combined_factor = (normalized_volatility + normalized_volume) / 2
 
     # 로그 함수를 사용하여 간격 조정
-    # combined_factor가 0에 가까울수록 간격이 길어지고, 1에 가까울수록 간격이 짧아집니다
+    # combined_factor가 0 가까울수록 간격이 길어지고, 1에 가까울수록 간격이 짧아집니다
     interval = base_interval * (1 - 0.5 * math.log(combined_factor + 1, 2))
 
     # 최소 1시간, 최대 8시간으로 제한
