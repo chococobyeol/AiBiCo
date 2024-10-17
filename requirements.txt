@@ -1,0 +1,13 @@
+python-dotenv
+openai
+pyupbit
+pandas
+numpy
+requests
+matplotlib
+mplfinance
+streamlit
+plotly
+
+
+
