@@ -9,8 +9,23 @@ import numpy as np
 import requests
 import sqlite3
 from datetime import datetime, timedelta
+import math
+import logging
+import fcntl
+import sys
+import signal
+import psutil
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 load_dotenv()
+
+# API 키를 환경 변수에서 가져오기
+MEDIASTACK_API_KEY = os.getenv('MEDIASTACK_API_KEY')
+CRYPTOCOMPARE_API_KEY = os.getenv('CRYPTOCOMPARE_API_KEY')
+
+# 뉴스 데이터 캐싱
+news_cache = {'mediastack': None, 'cryptocompare': None, 'last_update': None}
 
 # 전략 파일들 읽기 함수 수정
 def read_strategies():
@@ -91,14 +106,38 @@ def get_fear_and_greed_index():
     }
 
 # SQLite 데이터베이스 연결 및 테이블 생성
-def init_db():
-    conn = sqlite3.connect('trading_history.db')
+def check_and_update_table_structure(conn):
     cursor = conn.cursor()
     
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trades'")
-    if cursor.fetchone() is None:
+    # trades 테이블 구조 확인 및 업데이트
+    cursor.execute("PRAGMA table_info(trades)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if 'reflection' not in columns:
+        cursor.execute("ALTER TABLE trades ADD COLUMN reflection TEXT")
+        logging.info("Added 'reflection' column to trades table")
+    
+    # reflection_summary 테이블 존재 여부 확인 및 생성
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='reflection_summary'")
+    if not cursor.fetchone():
         cursor.execute('''
-        CREATE TABLE trades
+        CREATE TABLE reflection_summary
+        (id INTEGER PRIMARY KEY AUTOINCREMENT,
+         summary TEXT,
+         timestamp TEXT DEFAULT CURRENT_TIMESTAMP)
+        ''')
+        logging.info("Created reflection_summary table")
+    
+    conn.commit()
+
+def init_db():
+    db_path = os.path.join(os.path.dirname(__file__), 'trading_history.db')
+    logging.info(f"Initializing database at {db_path}")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trades
         (id INTEGER PRIMARY KEY AUTOINCREMENT,
          timestamp TEXT,
          decision TEXT,
@@ -108,66 +147,106 @@ def init_db():
          krw_balance REAL,
          btc_avg_buy_price REAL,
          btc_krw_price REAL,
-         success INTEGER,
-         reflection TEXT)
+         success INTEGER)
         ''')
-    else:
-        cursor.execute("PRAGMA table_info(trades)")
-        columns = [column[1] for column in cursor.fetchall()]
-        if 'reflection' not in columns:
-            cursor.execute('ALTER TABLE trades ADD COLUMN reflection TEXT')
-    
-    conn.commit()
-    return conn
+        conn.commit()
+        
+        # 테이블 구조 확인 및 업데이트
+        check_and_update_table_structure(conn)
+        
+        logging.info("Database initialized successfully")
+        return conn
+    except sqlite3.Error as e:
+        logging.error(f"Database initialization error: {e}")
+        raise
 
-# 거래 데이터 저장 함수 수정
+# 거래 이터 저장 함수 수정
 def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
-    cursor.execute('''
-    INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection))
-    conn.commit()
+    try:
+        cursor.execute('''
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection))
+        conn.commit()
+        logging.info(f"Trade saved successfully: {decision}, {success}")
+    except sqlite3.Error as e:
+        logging.error(f"Error saving trade: {e}")
+        conn.rollback()
 
-# 최근 거래 데이터 가져오는 함수
-def get_recent_trades(conn, limit=10):
+# 최근 거래 데이터 가져오는 함수 수정
+def get_recent_trades(conn, days=7, limit=None):
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,))
+    one_week_ago = (datetime.now() - timedelta(days=days)).isoformat()
+    
+    if limit:
+        cursor.execute("SELECT * FROM trades WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?", (one_week_ago, limit))
+    else:
+        cursor.execute("SELECT * FROM trades WHERE timestamp >= ? ORDER BY timestamp DESC", (one_week_ago,))
+    
     return cursor.fetchall()
 
-# 성과 분석 함수
-def analyze_performance(recent_trades, current_price):
+# 성능 분석 함수 수정
+def analyze_performance(trades, current_price):
     performance = []
-    for trade in recent_trades:
-        if trade[2] == 'buy':  # decision column
-            profit = (current_price - trade[7]) / trade[7] * 100  # (current_price - btc_avg_buy_price) / btc_avg_buy_price * 100
-        elif trade[2] == 'sell':
-            profit = (trade[8] - current_price) / current_price * 100  # (btc_krw_price - current_price) / current_price * 100
+    total_profit = 0
+    successful_trades = 0
+    for trade in trades:
+        if trade[9] == 0:  # trade[9]는 success 컬럼입니다. 0이면 실패한 거래입니다.
+            performance.append({
+                'decision': trade[2],
+                'timestamp': trade[1],
+                'profit': 0,
+                'reason': trade[4],
+                'success': False
+            })
         else:
-            profit = 0
-        performance.append({
-            'decision': trade[2],
-            'timestamp': trade[1],
-            'profit': profit,
-            'reason': trade[4]
-        })
-    return performance
+            if trade[2] == 'buy':  # decision column
+                profit = (current_price - trade[7]) / trade[7] * 100  # (current_price - btc_avg_buy_price) / btc_avg_buy_price * 100
+            elif trade[2] == 'sell':
+                profit = (trade[8] - current_price) / current_price * 100  # (btc_krw_price - current_price) / current_price * 100
+            else:
+                profit = 0
+            total_profit += profit
+            successful_trades += 1
+            performance.append({
+                'decision': trade[2],
+                'timestamp': trade[1],
+                'profit': profit,
+                'reason': trade[4],
+                'success': True
+            })
+    
+    avg_profit = total_profit / successful_trades if successful_trades > 0 else 0
+    return performance, avg_profit
 
-# 반성 생성 함수
-def generate_reflection(performance, strategies):
+# 새로운 함수 추가
+def get_previous_reflections(conn, limit=5):
+    cursor = conn.cursor()
+    cursor.execute("SELECT reflection FROM trades WHERE reflection IS NOT NULL ORDER BY timestamp DESC LIMIT ?", (limit,))
+    return [row[0] for row in cursor.fetchall()]
+
+# generate_reflection 함수 수정
+def generate_reflection(performance, strategies, trades, avg_profit, previous_reflections):
     client = OpenAI()
+    
+    previous_reflections_text = "\n".join(previous_reflections)
     
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {
                 "role": "system",
-                "content": f"You are an AI trading assistant tasked with analyzing recent trading performance and providing a reflection. Consider the following strategies:\n\n{strategies}\n\nAnalyze the performance data and provide insights on what went well, what could be improved, and how to adjust the strategy for better future performance. Be concise but insightful."
+                "content": f"You are an AI trading assistant tasked with analyzing trading performance over the past week and providing a reflection. Consider the following strategies:\n\n{strategies}\n\nAnalyze the performance data and trades, then provide insights on what went well, what could be improved, and how to adjust the strategy for better future performance. Be concise but insightful. Consider the average profit of {avg_profit:.2f}% over the past week. Also, consider these previous reflections:\n\n{previous_reflections_text}"
             },
             {
                 "role": "user",
-                "content": json.dumps(performance)
+                "content": json.dumps({
+                    "performance": performance,
+                    "trades": trades,
+                    "avg_profit": avg_profit
+                })
             }
         ],
         max_tokens=500
@@ -175,142 +254,448 @@ def generate_reflection(performance, strategies):
     
     return response.choices[0].message.content
 
-# AI 기반 트레이딩 로직
+def calculate_volatility(df, window=14):
+    # 일일 변동성 계산
+    df['daily_return'] = df['close'].pct_change()
+    
+    # 변동 (준편차) 계산
+    volatility = df['daily_return'].rolling(window=window).std() * (252 ** 0.5)  # 연간화된 동성
+    
+    return volatility.iloc[-1]  # 가장 최근 변동성 반환
+
+def get_volatility_data():
+    df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
+    current_volatility = calculate_volatility(df)
+    avg_volatility = calculate_volatility(df).mean()
+    
+    return {
+        "current_volatility": current_volatility,
+        "average_volatility": avg_volatility
+    }
+
+# MediaStack에서 뉴스 가져오기 (캐싱 적용, 호출 횟수 제한)
+def get_mediastack_news():
+    global news_cache
+    current_time = datetime.now()
+    if news_cache['mediastack'] is None or (current_time - news_cache['last_update']).total_seconds() > 5400:  # 1.5시간마다 업데이트
+        url = f"http://api.mediastack.com/v1/news?access_key={MEDIASTACK_API_KEY}&keywords=bitcoin,cryptocurrency&languages=en&limit=10"
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            news = response.json()['data']
+            news_cache['mediastack'] = [{'title': item['title'], 'description': item['description']} for item in news]
+            news_cache['last_update'] = current_time
+        except requests.RequestException as e:
+            logging.error(f"MediaStack API 오류: {str(e)}")
+            return []
+    return news_cache['mediastack']
+
+# CryptoCompare에서 뉴스 가져오기 (캐싱 적용, 호출 횟수 제한)
+def get_cryptocompare_news():
+    global news_cache
+    current_time = datetime.now()
+    if news_cache['cryptocompare'] is None or (current_time - news_cache['last_update']).total_seconds() > 1800:  # 30분마다 업데이트
+        url = f"https://min-api.cryptocompare.com/data/v2/news/?lang=EN&api_key={CRYPTOCOMPARE_API_KEY}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            news = response.json()['Data']
+            news_cache['cryptocompare'] = [{'title': item['title'], 'body': item['body']} for item in news[:10]]
+            news_cache['last_update'] = current_time
+        else:
+            print(f"CryptoCompare API 오류: {response.status_code}")
+            return []
+    return news_cache['cryptocompare']
+
+def get_news():
+    mediastack_news = get_mediastack_news()
+    cryptocompare_news = get_cryptocompare_news()
+    
+    # 뉴스 데이터 정제
+    cleaned_news = []
+    for news in mediastack_news + cryptocompare_news:
+        cleaned_news.append({
+            'title': news.get('title', '')[:100],  # 제목을 100자로 제한
+            'description': news.get('description', '')[:200] if 'description' in news else news.get('body', '')[:200]  # 설명 또는 본문을 200자로 제한
+        })
+    
+    return cleaned_news[:5]  # 최대 5개의 뉴스만 반환
+
+# 새로운 함수 추가
+def get_reflection_summary(conn):
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
+        result = cursor.fetchone()
+        return result[0] if result else "Initial trading. No previous reflections available."
+    except sqlite3.OperationalError as e:
+        if "no such column: reflection_summary" in str(e):
+            logging.warning("reflection_summary table not found. Creating it now.")
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reflection_summary
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             summary TEXT,
+             timestamp TEXT DEFAULT CURRENT_TIMESTAMP)
+            ''')
+            conn.commit()
+            return "Initial trading. No previous reflections available."
+        else:
+            raise
+
+def update_reflection_summary(conn, new_reflection, previous_summary):
+    client = OpenAI()
+    
+    if previous_summary:
+        prompt = f"Previous summary: {previous_summary}\n\nNew reflection: {new_reflection}\n\nCreate an updated summary that incorporates the new reflection into the previous summary. The summary should be concise but capture key insights and trends."
+    else:
+        prompt = f"Create a summary of the following reflection: {new_reflection}"
+    
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are an AI assistant tasked with summarizing trading reflections."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=300
+    )
+    
+    updated_summary = response.choices[0].message.content
+    
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO reflection_summary (summary) VALUES (?)", (updated_summary,))
+    conn.commit()
+    
+    return updated_summary
+
+# ai_trading 함수 수정
 def ai_trading():
-    access = os.getenv('UPBIT_ACCESS_KEY')
-    secret = os.getenv('UPBIT_SECRET_KEY')
-    upbit = pyupbit.Upbit(access, secret)
+    # OpenAI 클라이언트 초기화
+    client = OpenAI()
 
-    conn = init_db()
-
+    # 필요한 데이터 수집
+    upbit = pyupbit.Upbit(os.getenv('UPBIT_ACCESS_KEY'), os.getenv('UPBIT_SECRET_KEY'))
     current_status = get_current_status(upbit)
     orderbook = get_simplified_orderbook()
     chart_data = get_simplified_chart_data()
     fear_greed_index = get_fear_and_greed_index()
-
-    strategies = read_strategies()
+    volatility_data = get_volatility_data()
+    news = get_news()
     
-    recent_trades = get_recent_trades(conn)
-    performance = analyze_performance(recent_trades, current_status['btc_price'])
-    reflection = generate_reflection(performance, strategies)
+    # 데이터베이스 연결
+    conn = init_db()
 
-    client = OpenAI()
+    try:
+        # 최근 5개의 거래 데이터 가져오기
+        recent_trades = get_recent_trades(conn, days=7, limit=5)
+        
+        # 성능 분석
+        current_price = pyupbit.get_current_price("KRW-BTC")
+        performance, avg_profit = analyze_performance(recent_trades, current_price)
+        
+        # 전략 읽기
+        strategies = read_strategies()
+        
+        # 이전 반성 요약 가져오기
+        previous_summary = get_reflection_summary(conn)
+        
+        # 반성 생성
+        reflection = generate_reflection(performance, strategies, recent_trades, avg_profit, previous_summary)
+        
+        # 반성 요약 업데이트
+        updated_summary = update_reflection_summary(conn, reflection, previous_summary)
+        
+        # 시스템 메시지에 반성 내용 추가
+        system_message = f"You are an AI trading assistant. Analyze the given market data and make a trading decision. Consider the following reflection summary on recent performance:\n\n{updated_summary}"
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": f"You are an expert in Bitcoin investing. Analyze the provided data including RSI, MACD, Bollinger Bands, and the Fear and Greed Index. Decide whether to buy, sell, or hold. Consider market sentiment from the Fear and Greed Index in your decision. Use the following investment strategies:\n\n{strategies}\n\nAlso, consider the following reflection on recent performance:\n\n{reflection}"
-            },
-            {
-                "role": "user",
-                "content": json.dumps({
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": json.dumps({
                     "current_status": current_status,
                     "orderbook": orderbook,
                     "chart_data": chart_data,
-                    "fear_greed_index": fear_greed_index
-                })
-            }
-        ],
-        functions=[
-            {
-                "name": "make_trading_decision",
-                "description": "Make a trading decision based on the analyzed data and given strategy",
+                    "fear_greed_index": fear_greed_index,
+                    "volatility_data": volatility_data,
+                    "news": news
+                }, ensure_ascii=False)}
+            ],
+            functions=[{
+                "name": "trading_decision",
+                "description": "Make a trading decision based on the given market data and recent performance reflection",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "decision": {
                             "type": "string",
-                            "enum": ["buy", "sell", "hold"],
-                            "description": "The trading decision"
+                            "enum": ["buy", "sell", "hold"]
+                        },
+                        "percentage": {
+                            "type": "number",
+                            "description": "Percentage of total balance to trade"
                         },
                         "reason": {
                             "type": "string",
-                            "description": "The reason for the trading decision, referencing the strategy and recent performance reflection"
+                            "description": "Explanation for the trading decision"
                         }
                     },
-                    "required": ["decision", "reason"]
+                    "required": ["decision", "percentage", "reason"]
                 }
-            }
-        ],
-        function_call={"name": "make_trading_decision"}
-    )
+            }],
+            function_call={"name": "trading_decision"}
+        )
+        result = json.loads(response.choices[0].message.function_call.arguments)
+        logging.info(f"AI response: {result}")
 
-    result = response.choices[0].message.function_call.arguments
-    data = json.loads(result)
-    decision = data['decision']
-    reason = data['reason']
+        # 거래 실행
+        decision = result['decision']
+        percentage = result['percentage']
+        reason = result['reason']
 
-    print("\n현재 상태:")
-    print(f"KRW 잔고: {current_status['krw_balance']} 원")
-    print(f"BTC 잔고: {current_status['btc_balance']} BTC")
-    print(f"BTC 현재 가격: {current_status['btc_price']} 원")
-    print(f"\nAI 결정: {decision}")
-    print(f"결정 이유: {reason}")
-    print(f"\n반성: {reflection}")
+        # 데이터베이스 연결
+        conn = init_db()
 
-    if decision == 'buy':
-        krw_balance = current_status['krw_balance']
-        if krw_balance > 5000:
-            buy_amount = krw_balance * 0.9995
+        if decision != 'hold':
+            # 거래 전 잔액 확인
+            if decision == 'buy' and current_status['krw_balance'] <= 0:
+                logging.warning("Insufficient KRW balance for buy order")
+                save_trade(conn, decision, percentage, reason, 
+                           current_status['btc_balance'], 
+                           current_status['krw_balance'], 
+                           upbit.get_avg_buy_price("KRW-BTC"), 
+                           current_status['btc_price'],
+                           success=False,
+                           reflection="Insufficient KRW balance")
+                return
+            elif decision == 'sell' and current_status['btc_balance'] <= 0:
+                logging.warning("Insufficient BTC balance for sell order")
+                save_trade(conn, decision, percentage, reason, 
+                           current_status['btc_balance'], 
+                           current_status['krw_balance'], 
+                           upbit.get_avg_buy_price("KRW-BTC"), 
+                           current_status['btc_price'],
+                           success=False,
+                           reflection="Insufficient BTC balance")
+                return
+
+            # 실제 거래 실행
+            trade_amount = current_status['krw_balance'] * (percentage / 100) if decision == 'buy' else current_status['btc_balance'] * (percentage / 100)
+            
             try:
-                upbit.buy_market_order("KRW-BTC", buy_amount)
-                print(f"\n매수 실행: {buy_amount} 원어치의 BTC 구매")
-                print(f"매수 이유: {reason}")
-                # 거래 데이터 저장
-                btc_balance = upbit.get_balance("BTC")
-                krw_balance = upbit.get_balance("KRW")
-                btc_avg_buy_price = upbit.get_avg_buy_price("BTC")
-                percentage = (buy_amount / current_status['krw_balance']) * 100
-                success = True
-                save_trade(conn, 'buy', percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, current_status['btc_price'], success, reflection)
-            except Exception as e:
-                print(f"\n매수 실패: {str(e)}")
-                success = False
-                save_trade(conn, 'buy', 0, f"매수 실패: {str(e)}", current_status['btc_balance'], krw_balance, current_status['btc_price'], current_status['btc_price'], success, reflection)
-        else:
-            failure_reason = f"매수 실패: 원화 잔고({krw_balance} 원)가 5000원 미만입니다."
-            print(f"\n{failure_reason}")
-            success = False
-            save_trade(conn, 'buy', 0, failure_reason, current_status['btc_balance'], krw_balance, current_status['btc_price'], current_status['btc_price'], success, reflection)
-    elif decision == 'sell':
-        btc_balance = current_status['btc_balance']
-        btc_price = current_status['btc_price']
-        btc_value = btc_balance * btc_price
-        if btc_balance > 0 and btc_value > 5000:
-            try:
-                upbit.sell_market_order("KRW-BTC", btc_balance)
-                print(f"\n매도 실행: {btc_balance} BTC 판매 (약 {btc_value} 원)")
-                print(f"매도 이유: {reason}")
-                # 거래 데이터 저장
-                krw_balance = upbit.get_balance("KRW")
-                percentage = 100  # 전량 매도
-                success = True
-                save_trade(conn, 'sell', percentage, reason, 0, krw_balance, 0, btc_price, success, reflection)
-            except Exception as e:
-                print(f"\n매도 실패: {str(e)}")
-                success = False
-                save_trade(conn, 'sell', 0, f"매도 실패: {str(e)}", btc_balance, current_status['krw_balance'], current_status['btc_price'], btc_price, success, reflection)
-        else:
-            failure_reason = f"매도 실패: 비트코인 잔고({btc_balance} BTC, 약 {btc_value} 원)가 0이거나, 원화 가치가 5000원 미만입니다."
-            print(f"\n{failure_reason}")
-            success = False
-            save_trade(conn, 'sell', 0, failure_reason, btc_balance, current_status['krw_balance'], current_status['btc_price'], btc_price, success, reflection)
-    elif decision == 'hold':
-        print("\n홀딩: 현재 상태를 유지합니다.")
-        print(f"홀딩 이유: {reason}")
-        # 홀딩 데이터 저장
-        btc_balance = current_status['btc_balance']
-        krw_balance = current_status['krw_balance']
-        btc_avg_buy_price = upbit.get_avg_buy_price("BTC")
-        success = True
-        save_trade(conn, 'hold', 0, reason, btc_balance, krw_balance, btc_avg_buy_price, current_status['btc_price'], success, reflection)
+                if decision == 'buy':
+                    order = upbit.buy_market_order("KRW-BTC", trade_amount)
+                else:  # sell
+                    order = upbit.sell_market_order("KRW-BTC", trade_amount)
 
-    conn.close()
+                # 주문 상태 확인
+                if 'error' in order:
+                    raise Exception(f"Order failed: {order['error']['message']}")
+
+                # 거래 후 상태 업데이트
+                updated_status = get_current_status(upbit)
+
+                # 데이터베이스에 거래 기록
+                save_trade(conn, 
+                           decision, 
+                           percentage, 
+                           reason, 
+                           updated_status['btc_balance'], 
+                           updated_status['krw_balance'], 
+                           upbit.get_avg_buy_price("KRW-BTC"), 
+                           updated_status['btc_price'],
+                           success=True,
+                           reflection=reflection)  # 여기에 reflection 추가
+
+                logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
+            except Exception as trade_error:
+                logging.error(f"Trade execution failed: {str(trade_error)}")
+                save_trade(conn, 
+                           decision, 
+                           percentage, 
+                           reason, 
+                           current_status['btc_balance'], 
+                           current_status['krw_balance'], 
+                           upbit.get_avg_buy_price("KRW-BTC"), 
+                           current_status['btc_price'],
+                           success=False,
+                           reflection=str(trade_error))
+        else:
+            logging.info(f"Decision: Hold. Reason: {reason}")
+            save_trade(conn, 
+                       'hold', 
+                       0, 
+                       reason, 
+                       current_status['btc_balance'], 
+                       current_status['krw_balance'], 
+                       upbit.get_avg_buy_price("KRW-BTC"), 
+                       current_status['btc_price'],
+                       success=True)
+
+    except Exception as e:
+        logging.error(f"Error in ai_trading: {str(e)}")
+        if 'conn' in locals():
+            save_trade(conn, 
+                       'error', 
+                       0, 
+                       str(e), 
+                       current_status['btc_balance'], 
+                       current_status['krw_balance'], 
+                       upbit.get_avg_buy_price("KRW-BTC"), 
+                       current_status['btc_price'],
+                       success=False,
+                       reflection="Error in ai_trading function")
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def check_market_volatility():
+    df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
+    volatility = (df['high'] - df['low']).mean() / df['open'].mean()
+    return volatility
+
+def check_trading_volume():
+    df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
+    avg_volume = df['volume'].mean()
+    return avg_volume
+
+def calculate_trading_interval(volatility, volume):
+    # 기본 간격 (초 단위)
+    base_interval = 14400  # 4시간
+
+    # 변동성과 거래량을 0~1 사이의 값으로 정규화
+    normalized_volatility = min(volatility / 0.05, 1)  # 5% 변동성을 최대로 가정
+    normalized_volume = min(volume / 200, 1)  # 200 BTC를 최대 거래량으로 가정
+
+    # 변동성과 거래량의 가중 평균 계산 (각각 50% 가중치)
+    combined_factor = (normalized_volatility + normalized_volume) / 2
+
+    # 로그 함수를 사용하여 간격 조정
+    # combined_factor가 0에 가까울수록 간격이 길어지고, 1에 가까울수록 간격이 짧아집니다
+    interval = base_interval * (1 - 0.5 * math.log(combined_factor + 1, 2))
+
+    # 최소 1시간, 최대 8시간으로 제한
+    return max(min(interval, 28800), 3600)
+
+def check_market_conditions():
+    volatility = check_market_volatility()
+    volume = check_trading_volume()
+    current_price = pyupbit.get_current_price("KRW-BTC")
+    
+    # 여기에 시장 상황을 판단하는 로직을 가
+    # 예: 변동성이 정 임계값을 넘거나, 가격이 급격히 변동했을 때 True 반환
+    if volatility > 0.05 or volume > 200:  # 예시 임계값
+        return True
+    return False
+
+def save_next_trade_time(next_trade_time):
+    with open('next_trade_time.json', 'w') as f:
+        json.dump({"next_trade_time": next_trade_time.isoformat()}, f)
+
+def acquire_lock(lockfile):
+    try:
+        fd = open(lockfile, 'w')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except IOError:
+        return None
+
+def release_lock(fd):
+    if fd:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
+
+def terminate_process(pid):
+    try:
+        process = psutil.Process(pid)
+        process.terminate()
+        process.wait(timeout=10)
+    except psutil.NoSuchProcess:
+        logging.info(f"No process found with PID {pid}")
+    except psutil.TimeoutExpired:
+        logging.warning(f"Process {pid} did not terminate. Forcing kill...")
+        process.kill()
+    except Exception as e:
+        logging.error(f"Error terminating process {pid}: {e}")
 
 if __name__ == "__main__":
+    lockfile = '/tmp/autotrade.lock'
+    lock_fd = None
+
     try:
+        lock_fd = acquire_lock(lockfile)
+
+        if lock_fd is None:
+            logging.info("Another instance is already running. Attempting to terminate the existing process...")
+            try:
+                with open(lockfile, 'r') as f:
+                    pid = int(f.read().strip())
+                
+                terminate_process(pid)
+                
+                # 잠금 파일 제거
+                os.remove(lockfile)
+                
+                # 잠금 다시 획득 시도
+                lock_fd = acquire_lock(lockfile)
+                if lock_fd is None:
+                    logging.error("Failed to acquire lock even after terminating the previous process. Exiting.")
+                    sys.exit(1)
+            except Exception as e:
+                logging.error(f"Error while trying to terminate the previous process: {e}")
+                sys.exit(1)
+
+        # 현재 프로세스의 PID를 잠금 파일에 쓰기
+        os.write(lock_fd.fileno(), str(os.getpid()).encode())
+        
+        logging.info("Starting autotrade script")
+        db_path = os.path.join(os.path.dirname(__file__), 'trading_history.db')
+        if not os.path.exists(db_path):
+            logging.info(f"Database file does not exist at {db_path}. It will be created.")
+        else:
+            logging.info(f"Database file already exists at {db_path}.")
+
+        # 데이터베이스 초기화 시도
+        try:
+            conn = init_db()
+            conn.close()
+        except Exception as e:
+            logging.error(f"Failed to initialize database: {e}")
+
+        # 프로그램 시작 시 즉시 한 번의 거래 판정 수행
+        logging.info("Performing initial trading decision")
         ai_trading()
+
+        last_trade_time = datetime.now()
+        while True:
+            try:
+                current_time = datetime.now()
+                time_since_last_trade = (current_time - last_trade_time).total_seconds()
+
+                volatility = check_market_volatility()
+                volume = check_trading_volume()
+                interval = calculate_trading_interval(volatility, volume)
+
+                next_trade_time = last_trade_time + timedelta(seconds=interval)
+                save_next_trade_time(next_trade_time)  # 다음 거래 예정 시간 저장
+
+                if time_since_last_trade >= interval or check_market_conditions():
+                    ai_trading()
+                    last_trade_time = current_time
+                    logging.info(f"거래 실행 시간: {current_time}")
+                else:
+                    remaining_time = interval - time_since_last_trade
+                    logging.info(f"다음 거래까지 {remaining_time/60:.2f}분 남음")
+
+                time.sleep(300)  # 5분마다 체크
+
+            except Exception as e:
+                logging.error(f"Error in main loop: {e}")
+                time.sleep(300)  # 오류 발생 시 5분 후 재시도
+
     except Exception as e:
-        print(f"오류 발생: {e}")
+        logging.error(f"Unexpected error in main script: {e}")
+    finally:
+        if lock_fd:
+            release_lock(lock_fd)
+        if os.path.exists(lockfile):
+            os.remove(lockfile)
+        logging.info("Autotrade script terminated.")
