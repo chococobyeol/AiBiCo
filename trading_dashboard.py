@@ -33,13 +33,30 @@ def init_db():
      total_assets_krw REAL,
      cumulative_reflection TEXT)
     ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS external_transactions
+    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+     timestamp TEXT,
+     type TEXT,
+     amount REAL,
+     currency TEXT)
+    ''')
     conn.commit()
     return conn
 
 # 거래 데이터 가져오기
 def get_trade_data():
     conn = init_db()
-    query = "SELECT * FROM trades ORDER BY timestamp DESC"
+    query = """
+    SELECT t.*, e.net_external_flow
+    FROM trades t
+    LEFT JOIN (
+        SELECT timestamp,
+               SUM(CASE WHEN type = 'deposit' THEN amount ELSE -amount END) OVER (ORDER BY timestamp) as net_external_flow
+        FROM external_transactions
+    ) e ON t.timestamp >= e.timestamp
+    ORDER BY t.timestamp DESC
+    """
     df = pd.read_sql_query(query, conn)
     conn.close()
     
@@ -48,6 +65,7 @@ def get_trade_data():
         df['btc_krw_value'] = df['btc_balance'] * df['btc_krw_price']
         df['total_assets_btc'] = df['btc_balance'] + (df['krw_balance'] / df['btc_krw_price'])
         df['total_assets_btc_formatted'] = df['total_assets_btc'].apply(lambda x: f"{x:.4e}")
+        df['adjusted_total_profit'] = (df['total_assets_krw'] - df['net_external_flow'] - df['total_assets_krw'].iloc[-1]) / df['total_assets_krw'].iloc[-1]
     
     return df
 
@@ -144,8 +162,8 @@ def main():
             st.markdown(f"<p class='value-font' style='text-align: center;'>{success_rate:.2f}%</p>", unsafe_allow_html=True)
         with col3:
             st.markdown("<p class='big-font'>Total Profit</p>", unsafe_allow_html=True)
-            if 'total_profit' in filtered_df.columns and len(filtered_df) > 0:
-                total_profit = filtered_df['total_profit'].iloc[0] * 100
+            if 'adjusted_total_profit' in filtered_df.columns and len(filtered_df) > 0:
+                total_profit = filtered_df['adjusted_total_profit'].iloc[0] * 100
                 st.markdown(f"<p class='value-font' style='text-align: center;'>{total_profit:.2f}%</p>", unsafe_allow_html=True)
             else:
                 st.markdown("<p class='value-font' style='text-align: center;'>N/A</p>", unsafe_allow_html=True)
