@@ -142,15 +142,23 @@ def main():
     
     if len(df) > 0:
         st.sidebar.header("Data Filter")
-        start_date = st.sidebar.date_input("Start Date", df['timestamp'].min().date())
-        end_date = st.sidebar.date_input("End Date", df['timestamp'].max().date())
+        min_date = df['timestamp'].min().date()
+        max_date = df['timestamp'].max().date()
+        start_date = st.sidebar.date_input("Start Date", min_date, min_value=min_date, max_value=max_date)
+        end_date = st.sidebar.date_input("End Date", max_date, min_value=min_date, max_value=max_date)
         
+        if st.sidebar.button('Apply Filter'):
+            st.rerun()
+
         if start_date <= end_date:
             mask = (df['timestamp'].dt.date >= start_date) & (df['timestamp'].dt.date <= end_date)
             filtered_df = df.loc[mask]
         else:
             st.sidebar.error("Error: End date must be after start date.")
             filtered_df = df
+
+        # 'initial' 결정을 제외
+        filtered_df = filtered_df[filtered_df['decision'] != 'initial']
 
         col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
@@ -231,10 +239,13 @@ def main():
         fig.update_layout(height=600, width=1000)
         st.plotly_chart(fig, use_container_width=True)
 
+        # 원형 그래프를 나란히 표시
         col1, col2 = st.columns(2)
+        
         with col1:
             st.markdown("<h3>Trade Decision Distribution</h3>", unsafe_allow_html=True)
             decision_counts = filtered_df['decision'].value_counts()
+            decision_counts = decision_counts[decision_counts.index.isin(['buy', 'sell', 'hold'])]
             fig = go.Figure(data=[go.Pie(labels=decision_counts.index, values=decision_counts.values)])
             st.plotly_chart(fig, use_container_width=True)
 
