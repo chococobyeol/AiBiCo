@@ -92,46 +92,56 @@ def main():
         font-family: 'Roboto', sans-serif;
     }
     .big-font {
-        font-size: 1.5vw !important;
+        font-size: clamp(16px, 2vw, 24px) !important;
         font-weight: 700 !important;
     }
     .medium-font {
-        font-size: 1.2vw !important;
+        font-size: clamp(14px, 1.8vw, 20px) !important;
         font-weight: 500 !important;
     }
     .small-font {
-        font-size: 1vw !important;
+        font-size: clamp(12px, 1.6vw, 18px) !important;
         font-weight: 400 !important;
     }
     .value-font {
-        font-size: 1.1vw !important;
+        font-size: clamp(14px, 1.7vw, 22px) !important;
         font-weight: 500 !important;
     }
+    .date-font {
+        font-size: clamp(10px, 1.2vw, 16px) !important;
+        font-weight: 400 !important;
+        line-height: 1.2;
+    }
     h1 {
-        font-size: 2.5vw !important;
+        font-size: clamp(24px, 3vw, 36px) !important;
         font-weight: 700 !important;
         text-align: center;
         margin-bottom: 30px;
     }
     h2 {
-        font-size: 2vw !important;
+        font-size: clamp(20px, 2.5vw, 30px) !important;
         font-weight: 600 !important;
         text-align: center;
         margin-top: 40px;
         margin-bottom: 20px;
     }
     h3 {
-        font-size: 1.5vw !important;
+        font-size: clamp(18px, 2.2vw, 26px) !important;
         font-weight: 500 !important;
         text-align: center;
         margin-top: 30px;
         margin-bottom: 15px;
     }
     .stDataFrame {
-        font-size: 0.8vw !important;
+        font-size: clamp(10px, 1.4vw, 14px) !important;
     }
     .stTable {
-        font-size: 0.8vw !important;
+        font-size: clamp(10px, 1.4vw, 14px) !important;
+    }
+    @media (max-width: 768px) {
+        .stDataFrame, .stTable {
+            font-size: 10px !important;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -184,16 +194,18 @@ def main():
             if len(filtered_df) > 0:
                 start_date = filtered_df['timestamp'].min().strftime('%Y-%m-%d')
                 end_date = filtered_df['timestamp'].max().strftime('%Y-%m-%d')
-                st.markdown(f"<p class='value-font' style='text-align: center;'>{start_date} ~ {end_date}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p class='date-font' style='text-align: center;'>{start_date}<br>{end_date}</p>", unsafe_allow_html=True)
             else:
-                st.markdown("<p class='value-font' style='text-align: center;'>No data</p>", unsafe_allow_html=True)
+                st.markdown("<p class='date-font' style='text-align: center;'>No data</p>", unsafe_allow_html=True)
         with col6:
             st.markdown("<p class='big-font'>Next Trade</p>", unsafe_allow_html=True)
             next_trade_time = get_next_trade_time()
             if next_trade_time:
-                st.markdown(f"<p class='value-font' style='text-align: center;'>{next_trade_time.strftime('%Y-%m-%d %H:%M:%S')}</p>", unsafe_allow_html=True)
+                date = next_trade_time.strftime('%Y-%m-%d')
+                time = next_trade_time.strftime('%H:%M:%S')
+                st.markdown(f"<p class='date-font' style='text-align: center;'>{date}<br>{time}</p>", unsafe_allow_html=True)
             else:
-                st.markdown("<p class='value-font' style='text-align: center;'>No information</p>", unsafe_allow_html=True)
+                st.markdown("<p class='date-font' style='text-align: center;'>No information</p>", unsafe_allow_html=True)
 
         st.markdown("<h2>Profit Summary</h2>", unsafe_allow_html=True)
         if 'daily_profit' in filtered_df.columns and 'total_profit' in filtered_df.columns and len(filtered_df) > 0:
