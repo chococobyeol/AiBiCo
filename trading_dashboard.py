@@ -27,7 +27,10 @@ def init_db():
      btc_avg_buy_price REAL,
      btc_krw_price REAL,
      success INTEGER,
-     reflection TEXT)
+     reflection TEXT,
+     daily_profit REAL,
+     total_profit REAL,
+     total_assets_krw REAL)
     ''')
     conn.commit()
     return conn
@@ -42,17 +45,12 @@ def get_trade_data():
     if len(df) > 0:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df['btc_krw_value'] = df['btc_balance'] * df['btc_krw_price']
-        df['total_assets_krw'] = df['krw_balance'] + df['btc_krw_value']
         df['total_assets_btc'] = df['btc_balance'] + (df['krw_balance'] / df['btc_krw_price'])
         df['total_assets_btc_formatted'] = df['total_assets_btc'].apply(lambda x: f"{x:.4e}")
     
     return df
 
-# 성과 계산 함수
-def calculate_performance(df):
-    df['profit'] = df['btc_krw_price'].pct_change()
-    df['cumulative_profit'] = (1 + df['profit']).cumprod() - 1
-    return df
+# 성과 계산 함수 제거 (데이터베이스에서 직접 가져오므로 필요 없음)
 
 def get_next_trade_time():
     try:
@@ -80,8 +78,8 @@ def main():
     df = get_trade_data()
     
     if len(df) > 0:
-        df = calculate_performance(df)
-        
+        # 성과 계산 부분 제거
+
         st.sidebar.header("데이터 필터")
         start_date = st.sidebar.date_input("시작 날짜", df['timestamp'].min().date())
         end_date = st.sidebar.date_input("종료 날짜", df['timestamp'].max().date())
@@ -95,17 +93,19 @@ def main():
 
         col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
-            st.markdown("<p class='big-font'>성사된 거래 횟수</p>", unsafe_allow_html=True)
-            successful_trades = len(filtered_df[filtered_df['success'] == 1])
-            st.markdown(f"<p class='medium-font'>{successful_trades}</p>", unsafe_allow_html=True)
+            st.markdown("<p class='big-font'>총 거래 횟수</p>", unsafe_allow_html=True)
+            st.markdown(f"<p class='medium-font'>{len(filtered_df)}</p>", unsafe_allow_html=True)
         with col2:
             st.markdown("<p class='big-font'>성공률</p>", unsafe_allow_html=True)
-            success_rate = (successful_trades / len(filtered_df)) * 100 if len(filtered_df) > 0 else 0
+            success_rate = (filtered_df['success'].sum() / len(filtered_df)) * 100 if len(filtered_df) > 0 else 0
             st.markdown(f"<p class='medium-font'>{success_rate:.2f}%</p>", unsafe_allow_html=True)
         with col3:
-            st.markdown("<p class='big-font'>총 수익률</p>", unsafe_allow_html=True)
-            total_profit = filtered_df['cumulative_profit'].iloc[-1] * 100 if len(filtered_df) > 0 else 0
-            st.markdown(f"<p class='medium-font'>{total_profit:.2f}%</p>", unsafe_allow_html=True)
+            st.markdown("<p class='big-font'>누적 수익률</p>", unsafe_allow_html=True)
+            if 'total_profit' in filtered_df.columns and len(filtered_df) > 0:
+                total_profit = filtered_df['total_profit'].iloc[0] * 100
+                st.markdown(f"<p class='medium-font'>{total_profit:.2f}%</p>", unsafe_allow_html=True)
+            else:
+                st.markdown("<p class='medium-font'>N/A</p>", unsafe_allow_html=True)
         with col4:
             st.markdown("<p class='big-font'>현재 BTC 가격</p>", unsafe_allow_html=True)
             current_price = filtered_df['btc_krw_price'].iloc[-1] if len(filtered_df) > 0 else 0
@@ -126,11 +126,30 @@ def main():
             else:
                 st.markdown("<p class='small-font'>정보 없음</p>", unsafe_allow_html=True)
 
+        # 수익률 요약 테이블
+        st.markdown("<h2 style='text-align: center;'>수익률 요약</h2>", unsafe_allow_html=True)
+        if 'daily_profit' in filtered_df.columns and 'total_profit' in filtered_df.columns and len(filtered_df) > 0:
+            latest_data = filtered_df.iloc[0]
+            weekly_profit = filtered_df['daily_profit'].head(7).sum() if len(filtered_df) >= 7 else filtered_df['daily_profit'].sum()
+            monthly_profit = filtered_df['daily_profit'].head(30).sum() if len(filtered_df) >= 30 else filtered_df['daily_profit'].sum()
+            profit_summary = pd.DataFrame({
+                '기간': ['일간', '주간', '월간', '누적'],
+                '수익률': [
+                    f"{latest_data['daily_profit']*100:.2f}%",
+                    f"{weekly_profit*100:.2f}%",
+                    f"{monthly_profit*100:.2f}%",
+                    f"{latest_data['total_profit']*100:.2f}%"
+                ]
+            })
+            st.table(profit_summary)
+        else:
+            st.info("수익률 데이터가 충분하지 않습니다.")
+
         st.markdown("<h2 style='text-align: center;'>최근 거래 내역</h2>", unsafe_allow_html=True)
         if len(filtered_df) > 0:
             df_display = filtered_df[['timestamp', 'decision', 'percentage', 'reason', 
                                       'btc_balance', 'btc_krw_value', 'krw_balance', 
-                                      'total_assets_krw', 'total_assets_btc_formatted', 
+                                      'total_assets_btc_formatted', 
                                       'btc_krw_price', 'success']].head(10)
             df_display['success'] = df_display['success'].map({1: '성공', 0: '실패'})
             st.dataframe(df_display, height=300)
@@ -139,7 +158,16 @@ def main():
 
         st.markdown("<h2 style='text-align: center;'>트레이딩 성과</h2>", unsafe_allow_html=True)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('누적 수익률', 'BTC 가격'))
-        fig.add_trace(go.Scatter(x=filtered_df['timestamp'], y=filtered_df['cumulative_profit'], mode='lines', name='누적 수익률'), row=1, col=1)
+        
+        # 'total_profit' 컬럼이 있는지 확인하고, 없으면 계산
+        if 'total_profit' not in filtered_df.columns:
+            if 'daily_profit' in filtered_df.columns:
+                filtered_df['total_profit'] = filtered_df['daily_profit'].cumsum()
+            else:
+                st.warning("수익률 데이터가 없습니다. 차트를 표시할 수 없습니다.")
+                return
+
+        fig.add_trace(go.Scatter(x=filtered_df['timestamp'], y=filtered_df['total_profit'], mode='lines', name='누적 수익률'), row=1, col=1)
         fig.add_trace(go.Scatter(x=filtered_df['timestamp'], y=filtered_df['btc_krw_price'], mode='lines', name='BTC 가격'), row=2, col=1)
         fig.update_layout(height=600, width=1000)
         st.plotly_chart(fig, use_container_width=True)
@@ -186,14 +214,14 @@ def main():
         # 빈 데이터에 대한 처리
         col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
-            st.markdown("<p class='big-font'>성사된 거래 횟수</p>", unsafe_allow_html=True)
+            st.markdown("<p class='big-font'>총 거래 횟수</p>", unsafe_allow_html=True)
             st.markdown("<p class='medium-font'>0</p>", unsafe_allow_html=True)
         with col2:
             st.markdown("<p class='big-font'>성공률</p>", unsafe_allow_html=True)
             st.markdown("<p class='medium-font'>0.00%</p>", unsafe_allow_html=True)
         with col3:
-            st.markdown("<p class='big-font'>총 수익률</p>", unsafe_allow_html=True)
-            st.markdown("<p class='medium-font'>0.00%</p>", unsafe_allow_html=True)
+            st.markdown("<p class='big-font'>누적 수익률</p>", unsafe_allow_html=True)
+            st.markdown("<p class='medium-font'>N/A</p>", unsafe_allow_html=True)
         with col4:
             st.markdown("<p class='big-font'>현재 BTC 가격</p>", unsafe_allow_html=True)
             st.markdown("<p class='medium-font'>데이터 없음</p>", unsafe_allow_html=True)

@@ -136,6 +136,8 @@ def init_db():
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+        
+        # 기존 테이블 생성 쿼리
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS trades
         (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,13 +149,25 @@ def init_db():
          krw_balance REAL,
          btc_avg_buy_price REAL,
          btc_krw_price REAL,
-         success INTEGER)
+         success INTEGER,
+         reflection TEXT)
         ''')
+        
+        # 새로운 컬럼 추가
+        columns_to_add = [
+            ('daily_profit', 'REAL'),
+            ('total_profit', 'REAL'),
+            ('total_assets_krw', 'REAL')
+        ]
+        
+        for column_name, column_type in columns_to_add:
+            try:
+                cursor.execute(f"ALTER TABLE trades ADD COLUMN {column_name} {column_type}")
+                logging.info(f"Added column {column_name} to trades table")
+            except sqlite3.OperationalError:
+                logging.info(f"Column {column_name} already exists in trades table")
+        
         conn.commit()
-        
-        # 테이블 구조 확인 및 업데이트
-        check_and_update_table_structure(conn)
-        
         logging.info("Database initialized successfully")
         return conn
     except sqlite3.Error as e:
@@ -164,11 +178,28 @@ def init_db():
 def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
+    
+    # 이전 거래 데이터 가져오기
+    cursor.execute("SELECT btc_krw_price, total_assets_krw FROM trades ORDER BY timestamp DESC LIMIT 1")
+    previous_trade = cursor.fetchone()
+    
+    # 총 자산 계산
+    total_assets_krw = krw_balance + (btc_balance * btc_krw_price if btc_balance is not None and btc_krw_price is not None else 0)
+    
+    # 수익률 계산
+    if previous_trade and previous_trade[0] is not None and previous_trade[1] is not None:
+        previous_price, previous_assets = previous_trade
+        daily_profit = (btc_krw_price - previous_price) / previous_price if previous_price != 0 else 0
+        total_profit = (total_assets_krw - previous_assets) / previous_assets if previous_assets != 0 else 0
+    else:
+        daily_profit = 0
+        total_profit = 0
+    
     try:
         cursor.execute('''
-        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection))
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw))
         conn.commit()
         logging.info(f"Trade saved successfully: {decision}, {success}")
     except sqlite3.Error as e:
@@ -368,7 +399,7 @@ def update_reflection_summary(conn, new_reflection, previous_summary):
 
 # ai_trading 함수 수정
 def ai_trading():
-    # OpenAI 클라이언트 초기화
+    # OpenAI ��라이언트 초기화
     client = OpenAI()
 
     # 필요한 데이터 수집
@@ -461,7 +492,7 @@ def ai_trading():
                 save_trade(conn, decision, percentage, reason, 
                            current_status['btc_balance'], 
                            current_status['krw_balance'], 
-                           upbit.get_avg_buy_price("KRW-BTC"), 
+                           upbit.get_avg_buy_price("KRW-BTC") or 0,  # None 대신 0 사용
                            current_status['btc_price'],
                            success=False,
                            reflection="Insufficient KRW balance")
@@ -471,7 +502,7 @@ def ai_trading():
                 save_trade(conn, decision, percentage, reason, 
                            current_status['btc_balance'], 
                            current_status['krw_balance'], 
-                           upbit.get_avg_buy_price("KRW-BTC"), 
+                           upbit.get_avg_buy_price("KRW-BTC") or 0,  # None 대신 0 사용
                            current_status['btc_price'],
                            success=False,
                            reflection="Insufficient BTC balance")
@@ -539,7 +570,7 @@ def ai_trading():
                        str(e), 
                        current_status['btc_balance'], 
                        current_status['krw_balance'], 
-                       upbit.get_avg_buy_price("KRW-BTC"), 
+                       upbit.get_avg_buy_price("KRW-BTC") or 0,  # None 대신 0 사용
                        current_status['btc_price'],
                        success=False,
                        reflection="Error in ai_trading function")
