@@ -225,7 +225,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         # 일일 수익률 (BTC 가치 변동 + 거래로 인한 변화)
         daily_profit = (total_assets_krw - prev_total_assets) / prev_total_assets if prev_total_assets != 0 else 0
         
-        # 누적 수익률 (첫 거래 이후 전�� 수익률)
+        # 누적 수익률 (첫 거래 ���후 전 수익률)
         cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
         first_trade = cursor.fetchone()
         if first_trade:
@@ -402,7 +402,7 @@ def get_news():
     for news in mediastack_news + cryptocompare_news:
         cleaned_news.append({
             'title': news.get('title', '')[:100],  # 제목을 100자로 제한
-            'description': news.get('description', '')[:200] if 'description' in news else news.get('body', '')[:200]  # 설명 또는 본문을 200자로 제한
+            'description': news.get('description', '')[:200] if 'description' in news else news.get('body', '')[:200]  # 설명 또��� 본문을 200자로 제한
         })
     
     return cleaned_news[:5]  # 최대 5개의 뉴스만 반환
@@ -665,7 +665,8 @@ def ai_trading():
                        current_status['btc_price'],
                        success=True,
                        reflection=reflection,
-                       cumulative_reflection=updated_summary)
+                       cumulative_reflection=updated_summary,
+                       short_term_necessity=short_term_necessity)
             logging.info(f"Hold decision saved: {reason}")
 
         return {'short_term_necessity': short_term_necessity}
@@ -682,8 +683,10 @@ def ai_trading():
                    current_status['btc_price'],
                    success=False,
                    reflection="Error in ai_trading function",
-                   cumulative_reflection="Error occurred during trading")
+                   cumulative_reflection="Error occurred during trading",
+                   short_term_necessity=None)
         logging.info("Error trade saved")
+        return {'short_term_necessity': None}
     finally:
         conn.close()
         logging.info("Finished ai_trading function")
