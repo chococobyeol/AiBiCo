@@ -232,7 +232,7 @@ def main():
             df_display = filtered_df[['timestamp', 'decision', 'percentage', 'reason', 
                                       'btc_balance', 'btc_krw_value', 'krw_balance', 
                                       'total_assets_btc_formatted', 
-                                      'btc_krw_price', 'success']].head(10)
+                                      'btc_krw_price', 'success', 'short_term_necessity']].head(10)
             df_display['success'] = df_display['success'].map({1: 'Success', 0: 'Failure'})
             st.dataframe(df_display, height=300)
         else:

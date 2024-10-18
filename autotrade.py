@@ -118,7 +118,7 @@ def check_and_update_table_structure(conn):
         cursor.execute("ALTER TABLE trades ADD COLUMN reflection TEXT")
         logging.info("Added 'reflection' column to trades table")
     
-    # reflection_summary 테이블 존재 여부 확인 및 생성
+    # reflection_summary 테이블 존재 여부 확인 및 생
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='reflection_summary'")
     if not cursor.fetchone():
         cursor.execute('''
@@ -158,7 +158,8 @@ def init_db():
          cumulative_reflection TEXT,
          adjusted_profit REAL,
          twr REAL,
-         mwr REAL)
+         mwr REAL,
+         short_term_necessity REAL)
         ''')
         
         # reflection_summary 테이블 생성
@@ -177,7 +178,8 @@ def init_db():
             ('cumulative_reflection', 'TEXT'),
             ('adjusted_profit', 'REAL'),
             ('twr', 'REAL'),
-            ('mwr', 'REAL')
+            ('mwr', 'REAL'),
+            ('short_term_necessity', 'REAL')
         ]
         
         for column_name, column_type in columns_to_add:
@@ -204,7 +206,7 @@ def init_db():
         raise
 
 # 거래 이터 저장 함수 수정
-def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, adjusted_profit=None):
+def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, adjusted_profit=None, short_term_necessity=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
     
@@ -251,9 +253,9 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
 
     try:
         cursor.execute('''
-        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr, adjusted_profit)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr, adjusted_profit))
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr, adjusted_profit, short_term_necessity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr, adjusted_profit, short_term_necessity))
         conn.commit()
         logging.info(f"Trade saved successfully: {decision}, {success}")
     except sqlite3.Error as e:
@@ -405,7 +407,7 @@ def get_news():
     
     return cleaned_news[:5]  # 최대 5개의 뉴스만 반환
 
-# ��로운 함수 추가
+# 로운 함수 추가
 def get_reflection_summary(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
@@ -530,7 +532,14 @@ def ai_trading():
         system_message = f"""You are an AI trading assistant. Analyze the given market data and make a trading decision. 
         Consider the following reflection summary on recent performance:\n\n{updated_summary}
         Current BTC balance: {current_btc_balance}
-        IMPORTANT: If the current BTC balance is 0, do not make a 'sell' decision."""
+        IMPORTANT: If the current BTC balance is 0, do not make a 'sell' decision.
+        
+        Additionally, evaluate the necessity for short-term trading based on current market conditions. 
+        The trading interval can be adjusted between 1 hour (for very short-term trading) and 8 hours (for longer-term trading).
+        Provide a short-term trading necessity score from 0 to 1, where:
+        0: No need for short-term trading, prefer longer intervals (closer to 8 hours)
+        1: High necessity for short-term trading, prefer shorter intervals (closer to 1 hour)
+        Base this score on market volatility, recent news impact, and potential short-term opportunities."""
 
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -562,9 +571,13 @@ def ai_trading():
                         "reason": {
                             "type": "string",
                             "description": "Explanation for the trading decision"
+                        },
+                        "short_term_necessity": {
+                            "type": "number",
+                            "description": "Score from 0 to 1 indicating the necessity of short-term trading"
                         }
                     },
-                    "required": ["decision", "percentage", "reason"]
+                    "required": ["decision", "percentage", "reason", "short_term_necessity"]
                 }
             }],
             function_call={"name": "trading_decision"}
@@ -575,6 +588,8 @@ def ai_trading():
         decision = result['decision']
         percentage = result['percentage']
         reason = result['reason']
+        short_term_necessity = result['short_term_necessity']
+        logging.info(f"Short-term trading necessity score: {short_term_necessity}")
 
         if decision == 'sell' and current_btc_balance == 0:
             decision = 'hold'
@@ -620,7 +635,8 @@ def ai_trading():
                                success=True,
                                reflection=reflection,
                                cumulative_reflection=updated_summary,
-                               adjusted_profit=adjusted_profit)
+                               adjusted_profit=adjusted_profit,
+                               short_term_necessity=short_term_necessity)
                     logging.info(f"Trade saved: {decision}, {percentage}%, {reason}")
 
                     logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
@@ -652,6 +668,11 @@ def ai_trading():
                        cumulative_reflection=updated_summary)
             logging.info(f"Hold decision saved: {reason}")
 
+        # 거래 간격 계산에 short_term_necessity 사용
+        volatility = check_market_volatility()
+        volume = check_trading_volume()
+        interval = calculate_trading_interval(volatility, volume, short_term_necessity)
+
     except Exception as e:
         logging.error(f"Error in ai_trading: {str(e)}")
         save_trade(conn, 
@@ -680,20 +701,19 @@ def check_trading_volume():
     avg_volume = df['volume'].mean()
     return avg_volume
 
-def calculate_trading_interval(volatility, volume):
+def calculate_trading_interval(volatility, volume, short_term_necessity):
     # 기본 간격 (초 단위)
-    base_interval = 14400  # 4시간
+    base_interval = 28800  # 8시간
 
-    # 변동성과 거래량을 0~1 사이의 값으로 정규화
-    normalized_volatility = min(volatility / 0.05, 1)  # 5% 변동성을 최대로 가정
-    normalized_volume = min(volume / 200, 1)  # 200 BTC를 최대 거래량으로 가정
+    # 변동성, 거래량, 단기 거래 필요성을 0~1 사이의 값으로 정규화
+    normalized_volatility = min(volatility / 0.02, 1)  # 변동성 임계값을 0.02로 수정
+    normalized_volume = min(volume / 10, 1)  # 거래량 임계값을 10으로 수정
 
-    # 변동성과 거래량의 가중 평균 계산 (각각 50% 가중치)
-    combined_factor = (normalized_volatility + normalized_volume) / 2
+    # 세 요소의 가중 평균 계산
+    combined_factor = (normalized_volatility + normalized_volume + short_term_necessity) / 3
 
     # 로그 함수를 사용하여 간격 조정
-    # combined_factor가 0 가까울수록 간격이 길어지고, 1에 가까울수록 간격이 짧아집니다
-    interval = base_interval * (1 - 0.5 * math.log(combined_factor + 1, 2))
+    interval = base_interval * (1 - 0.7 * math.log(combined_factor + 1, 2))
 
     # 최소 1시간, 최대 8시간으로 제한
     return max(min(interval, 28800), 3600)
@@ -703,9 +723,7 @@ def check_market_conditions():
     volume = check_trading_volume()
     current_price = pyupbit.get_current_price("KRW-BTC")
     
-    # 여기에 시장 상황을 판단하는 로직을 가
-    # 예: 변동성이 정 임계값을 넘거나, 가격이 급격히 변동했을 때 True 반환
-    if volatility > 0.05 or volume > 200:  # 예시 임계값
+    if volatility > 0.02 or volume > 10:  # 임계값을 수정
         return True
     return False
 
