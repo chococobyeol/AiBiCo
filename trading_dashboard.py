@@ -213,12 +213,14 @@ def main():
             weekly_profit = filtered_df['daily_profit'].head(7).sum() if len(filtered_df) >= 7 else filtered_df['daily_profit'].sum()
             monthly_profit = filtered_df['daily_profit'].head(30).sum() if len(filtered_df) >= 30 else filtered_df['daily_profit'].sum()
             profit_summary = pd.DataFrame({
-                'Period': ['Daily', 'Weekly', 'Monthly', 'Total'],
+                'Period': ['Daily', 'Weekly', 'Monthly', 'Total', 'TWR', 'MWR'],
                 'Profit': [
                     f"{latest_data['daily_profit']*100:.2f}%",
                     f"{weekly_profit*100:.2f}%",
                     f"{monthly_profit*100:.2f}%",
-                    f"{latest_data['total_profit']*100:.2f}%"
+                    f"{latest_data['total_profit']*100:.2f}%",
+                    f"{latest_data['twr']:.2f}%" if 'twr' in latest_data and latest_data['twr'] is not None else 'N/A',
+                    f"{latest_data['mwr']:.2f}%" if 'mwr' in latest_data and latest_data['mwr'] is not None else 'N/A'
                 ]
             })
             st.table(profit_summary)

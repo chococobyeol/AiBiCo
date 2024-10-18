@@ -15,6 +15,7 @@ import fcntl
 import sys
 import signal
 import psutil
+from scipy import optimize
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -155,7 +156,9 @@ def init_db():
          total_profit REAL,
          total_assets_krw REAL,
          cumulative_reflection TEXT,
-         adjusted_profit REAL)
+         adjusted_profit REAL,
+         twr REAL,
+         mwr REAL)
         ''')
         
         # reflection_summary 테이블 생성
@@ -172,7 +175,9 @@ def init_db():
             ('total_profit', 'REAL'),
             ('total_assets_krw', 'REAL'),
             ('cumulative_reflection', 'TEXT'),
-            ('adjusted_profit', 'REAL')
+            ('adjusted_profit', 'REAL'),
+            ('twr', 'REAL'),
+            ('mwr', 'REAL')
         ]
         
         for column_name, column_type in columns_to_add:
@@ -199,31 +204,56 @@ def init_db():
         raise
 
 # 거래 이터 저장 함수 수정
-def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, adjusted_profit=None):
+def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
     
     # 이전 거래 데이터 가져오기
-    cursor.execute("SELECT btc_krw_price, total_assets_krw FROM trades ORDER BY timestamp DESC LIMIT 1")
+    cursor.execute("SELECT btc_balance, krw_balance, btc_krw_price, total_assets_krw FROM trades ORDER BY timestamp DESC LIMIT 1")
     previous_trade = cursor.fetchone()
     
     # 총 자산 계산
-    total_assets_krw = krw_balance + (btc_balance * btc_krw_price if btc_balance is not None and btc_krw_price is not None else 0)
+    total_assets_krw = krw_balance + (btc_balance * btc_krw_price)
     
     # 수익률 계산
-    if previous_trade and previous_trade[0] is not None and previous_trade[1] is not None:
-        previous_price, previous_assets = previous_trade
-        daily_profit = (btc_krw_price - previous_price) / previous_price if previous_price != 0 else 0
-        total_profit = (total_assets_krw - previous_assets) / previous_assets if previous_assets != 0 else 0
+    if previous_trade:
+        prev_btc_balance, prev_krw_balance, prev_btc_price, prev_total_assets = previous_trade
+        prev_total_assets = prev_krw_balance + (prev_btc_balance * prev_btc_price)
+        
+        # 일일 수익률 (BTC 가치 변동 + 거래로 인한 변화)
+        daily_profit = (total_assets_krw - prev_total_assets) / prev_total_assets if prev_total_assets != 0 else 0
+        
+        # 누적 수익률 (첫 거래 이후 전체 수익률)
+        cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
+        first_trade = cursor.fetchone()
+        if first_trade:
+            initial_assets = first_trade[0]
+            total_profit = (total_assets_krw - initial_assets) / initial_assets if initial_assets != 0 else 0
+        else:
+            total_profit = 0
     else:
         daily_profit = 0
         total_profit = 0
     
+    # TWR과 MWR 계산 (거래 데이터가 충분할 때만)
+    cursor.execute("SELECT COUNT(*) FROM trades")
+    trade_count = cursor.fetchone()[0]
+    
+    if trade_count > 1:  # 최소 2개의 거래 데이터가 있을 때만 계산
+        twr = calculate_twr(conn)
+        mwr = calculate_mwr(conn)
+        # None 값 체크 추가
+        twr = 0.0 if twr is None else twr
+        mwr = 0.0 if mwr is None else mwr
+    else:
+        twr = 0.0
+        mwr = 0.0
+
     try:
         cursor.execute('''
-        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, adjusted_profit)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, adjusted_profit))
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr))
         conn.commit()
         logging.info(f"Trade saved successfully: {decision}, {success}")
     except sqlite3.Error as e:
@@ -708,6 +738,62 @@ def terminate_process(pid):
         process.kill()
     except Exception as e:
         logging.error(f"Error terminating process {pid}: {e}")
+
+def calculate_twr(conn):
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT trades.timestamp, trades.total_assets_krw, 
+           COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE -amount END), 0) as net_flow
+    FROM trades
+    LEFT JOIN external_transactions ON trades.timestamp >= external_transactions.timestamp
+    GROUP BY trades.timestamp
+    ORDER BY trades.timestamp
+    """)
+    data = cursor.fetchall()
+
+    if len(data) < 2:
+        return 0.0  # 또는 다른 적절한 기본값
+
+    twr = 1
+    for i in range(1, len(data)):
+        prev_assets = data[i-1][1]
+        curr_assets = data[i][1]
+        net_flow = data[i][2]
+        
+        if prev_assets + net_flow != 0:
+            period_return = (curr_assets - net_flow) / (prev_assets + net_flow)
+            twr *= period_return
+
+    return (twr - 1) * 100  # 백분율로 변환
+
+def calculate_mwr(conn):
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT trades.timestamp, trades.total_assets_krw, 
+           COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE -amount END), 0) as net_flow
+    FROM trades
+    LEFT JOIN external_transactions ON trades.timestamp >= external_transactions.timestamp
+    GROUP BY trades.timestamp
+    ORDER BY trades.timestamp
+    """)
+    data = cursor.fetchall()
+
+    dates = [(datetime.fromisoformat(row[0]) - datetime.fromisoformat(data[0][0])).days / 365.0 for row in data]
+    cashflows = [-row[1] for row in data]  # 초기 투자를 음수로
+    cashflows[0] += data[0][1]  # 첫 번째 총 자산을 더함
+    cashflows[1:] = [cf + nf for cf, nf in zip(cashflows[1:], [row[2] for row in data[1:]])]  # 순 현금 흐름 추가
+
+    def xirr(cashflows, dates):
+        def objective(rate):
+            return sum([cf / (1 + rate) ** t for cf, t in zip(cashflows, dates)])
+        
+        return optimize.newton(objective, 0.1)
+
+    try:
+        mwr = xirr(cashflows, dates)
+        return mwr * 100  # 백분율로 변환
+    except:
+        return 0.0  # 또는 다른 적절한 기본값
 
 if __name__ == "__main__":
     lockfile = '/tmp/autotrade.lock'
