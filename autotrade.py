@@ -225,7 +225,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         # 일일 수익률 (BTC 가치 변동 + 거래로 인한 변화)
         daily_profit = (total_assets_krw - prev_total_assets) / prev_total_assets if prev_total_assets != 0 else 0
         
-        # 누적 수익률 (첫 거래 이후 전체 수익률)
+        # 누적 수익률 (첫 거래 이후 전�� 수익률)
         cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
         first_trade = cursor.fetchone()
         if first_trade:
@@ -668,10 +668,7 @@ def ai_trading():
                        cumulative_reflection=updated_summary)
             logging.info(f"Hold decision saved: {reason}")
 
-        # 거래 간격 계산에 short_term_necessity 사용
-        volatility = check_market_volatility()
-        volume = check_trading_volume()
-        interval = calculate_trading_interval(volatility, volume, short_term_necessity)
+        return {'short_term_necessity': short_term_necessity}
 
     except Exception as e:
         logging.error(f"Error in ai_trading: {str(e)}")
@@ -872,13 +869,17 @@ if __name__ == "__main__":
 
                 volatility = check_market_volatility()
                 volume = check_trading_volume()
-                interval = calculate_trading_interval(volatility, volume)
+                
+                # ai_trading 함수 호출 후 short_term_necessity 값을 얻어옵니다.
+                trade_result = ai_trading()
+                short_term_necessity = trade_result.get('short_term_necessity', 0.5)  # 기본값 0.5
+                
+                interval = calculate_trading_interval(volatility, volume, short_term_necessity)
 
                 next_trade_time = last_trade_time + timedelta(seconds=interval)
                 save_next_trade_time(next_trade_time)
 
                 if time_since_last_trade >= interval or check_market_conditions():
-                    ai_trading()
                     last_trade_time = current_time
                     logging.info(f"Trade executed at: {current_time}")
                 else:
