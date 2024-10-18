@@ -22,17 +22,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 load_dotenv()
 
-# API 키를 환경 변수에서 가져오기
+# API keys from environment variables
 MEDIASTACK_API_KEY = os.getenv('MEDIASTACK_API_KEY')
 CRYPTOCOMPARE_API_KEY = os.getenv('CRYPTOCOMPARE_API_KEY')
 
-# 뉴스 데이터 캐싱
+# News data caching
 news_cache = {'mediastack': None, 'cryptocompare': None, 'last_update': None}
 
-# MIN_TRADE_INTERVAL 설정 (초 단위)
-MIN_TRADE_INTERVAL = 3600  # 최소 거래 간격: 1시간
+# MIN_TRADE_INTERVAL in seconds
+MIN_TRADE_INTERVAL = 3600  # 1 hour
 
-# 전략 파일들 읽기 함수 수정
+# Read strategy files
 def read_strategies():
     strategies = ""
     strategy_files = os.listdir('strategies')
@@ -42,7 +42,7 @@ def read_strategies():
                 strategies += f.read() + "\n\n"
     return strategies
 
-# 현재 계정 상태 조회
+# Get current account status
 def get_current_status(upbit):
     krw_balance = upbit.get_balance("KRW")
     btc_balance = upbit.get_balance("BTC")
@@ -54,7 +54,7 @@ def get_current_status(upbit):
         "btc_price": btc_price
     }
 
-# 간단한 호가 정보 조회
+# Get simplified orderbook
 def get_simplified_orderbook():
     orderbook = pyupbit.get_orderbook("KRW-BTC")
     return {
@@ -64,11 +64,11 @@ def get_simplified_orderbook():
         "bid_size": orderbook['orderbook_units'][0]['bid_size']
     }
 
-# 차트 데이터 및 기술적 지표 계산
+# Get simplified chart data with technical indicators
 def get_simplified_chart_data():
     df = pyupbit.get_ohlcv("KRW-BTC", count=100, interval="day")
 
-    # RSI 계산
+    # Calculate RSI
     delta = df['close'].diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -77,13 +77,13 @@ def get_simplified_chart_data():
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
 
-    # MACD 계산
+    # Calculate MACD
     exp1 = df['close'].ewm(span=12, adjust=False).mean()
     exp2 = df['close'].ewm(span=26, adjust=False).mean()
     macd = exp1 - exp2
     signal = macd.ewm(span=9, adjust=False).mean()
 
-    # 볼린저 밴드 계산
+    # Calculate Bollinger Bands
     df['MA20'] = df['close'].rolling(window=20).mean()
     df['stddev'] = df['close'].rolling(window=20).std()
     df['upper'] = df['MA20'] + (df['stddev'] * 2)
@@ -100,7 +100,7 @@ def get_simplified_chart_data():
 
     return latest_data
 
-# 공포 탐욕 지수 조회
+# Get Fear and Greed Index
 def get_fear_and_greed_index():
     url = "https://api.alternative.me/fng/"
     response = requests.get(url)
@@ -110,31 +110,7 @@ def get_fear_and_greed_index():
         "classification": data["data"][0]["value_classification"]
     }
 
-# SQLite 데이터베이스 연결 및 테이블 생성
-def check_and_update_table_structure(conn):
-    cursor = conn.cursor()
-
-    # trades 테이블 구조 확인 및 업데이트
-    cursor.execute("PRAGMA table_info(trades)")
-    columns = [column[1] for column in cursor.fetchall()]
-
-    if 'reflection' not in columns:
-        cursor.execute("ALTER TABLE trades ADD COLUMN reflection TEXT")
-        logging.info("Added 'reflection' column to trades table")
-
-    # reflection_summary 테이블 존재 여부 확인 및 생성
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='reflection_summary'")
-    if not cursor.fetchone():
-        cursor.execute('''
-        CREATE TABLE reflection_summary
-        (id INTEGER PRIMARY KEY AUTOINCREMENT,
-         summary TEXT,
-         timestamp TEXT DEFAULT CURRENT_TIMESTAMP)
-        ''')
-        logging.info("Created reflection_summary table")
-
-    conn.commit()
-
+# Initialize SQLite database
 def init_db():
     db_path = os.path.join(os.path.dirname(__file__), 'trading_history.db')
     logging.info(f"Initializing database at {db_path}")
@@ -142,7 +118,7 @@ def init_db():
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # trades 테이블 생성
+        # Create trades table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS trades
         (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,7 +142,7 @@ def init_db():
          short_term_necessity REAL)
         ''')
 
-        # reflection_summary 테이블 생성
+        # Create reflection_summary table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS reflection_summary
         (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +150,7 @@ def init_db():
          timestamp TEXT)
         ''')
 
-        # 새로운 컬럼 추가 (이미 존재하는 경우 무시)
+        # Add new columns if they don't exist
         columns_to_add = [
             ('daily_profit', 'REAL'),
             ('total_profit', 'REAL'),
@@ -209,27 +185,27 @@ def init_db():
         logging.error(f"Database initialization error: {e}")
         raise
 
-# 거래 데이터 저장 함수 수정
+# Save trade data
 def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, adjusted_profit=None, short_term_necessity=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
 
-    # 이전 거래 데이터 가져오기
+    # Get previous trade data
     cursor.execute("SELECT btc_balance, krw_balance, btc_krw_price, total_assets_krw FROM trades ORDER BY timestamp DESC LIMIT 1")
     previous_trade = cursor.fetchone()
 
-    # 총 자산 계산
+    # Calculate total assets in KRW
     total_assets_krw = krw_balance + (btc_balance * btc_krw_price)
 
-    # 수익률 계산
+    # Calculate profits
     if previous_trade:
         prev_btc_balance, prev_krw_balance, prev_btc_price, prev_total_assets = previous_trade
         prev_total_assets = prev_krw_balance + (prev_btc_balance * prev_btc_price)
 
-        # 일일 수익률 (BTC 가치 변동 + 거래로 인한 변화)
+        # Daily profit
         daily_profit = (total_assets_krw - prev_total_assets) / prev_total_assets if prev_total_assets != 0 else 0
 
-        # 누적 수익률 ( 거래 후 전 수익)
+        # Total profit
         cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
         first_trade = cursor.fetchone()
         if first_trade:
@@ -241,14 +217,13 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         daily_profit = 0
         total_profit = 0
 
-    # TWR과 MWR 계산 (거래 데이터가 충분할 때만)
+    # Calculate TWR and MWR if enough data
     cursor.execute("SELECT COUNT(*) FROM trades")
     trade_count = cursor.fetchone()[0]
 
-    if trade_count > 1:  # 최소 2개의 거래 데이터가 있을 때만 계산
+    if trade_count > 1:
         twr = calculate_twr(conn)
         mwr = calculate_mwr(conn)
-        # None 값 체크 추가
         twr = 0.0 if twr is None else twr
         mwr = 0.0 if mwr is None else mwr
     else:
@@ -266,7 +241,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         logging.error(f"Error saving trade: {e}")
         conn.rollback()
 
-# 최근 거래 데이터 가져오는 함수 수정
+# Get recent trades
 def get_recent_trades(conn, days=7, limit=None):
     cursor = conn.cursor()
     one_week_ago = (datetime.now() - timedelta(days=days)).isoformat()
@@ -278,13 +253,13 @@ def get_recent_trades(conn, days=7, limit=None):
 
     return cursor.fetchall()
 
-# 성능 분석 함수 수정
+# Analyze performance
 def analyze_performance(trades, current_price):
     performance = []
     total_profit = 0
     successful_trades = 0
     for trade in trades:
-        if trade[9] == 0:  # trade[9]는 success 컬럼입니다. 0이면 실패한 거래입니다.
+        if trade[9] == 0:  # success column
             performance.append({
                 'decision': trade[2],
                 'timestamp': trade[1],
@@ -293,10 +268,10 @@ def analyze_performance(trades, current_price):
                 'success': False
             })
         else:
-            if trade[2] == 'buy':  # decision column
-                profit = (current_price - trade[7]) / trade[7] * 100  # (current_price - btc_avg_buy_price) / btc_avg_buy_price * 100
+            if trade[2] == 'buy':
+                profit = (current_price - trade[7]) / trade[7] * 100
             elif trade[2] == 'sell':
-                profit = (trade[8] - current_price) / current_price * 100  # (btc_krw_price - current_price) / current_price * 100
+                profit = (trade[8] - current_price) / current_price * 100
             else:
                 profit = 0
             total_profit += profit
@@ -312,13 +287,7 @@ def analyze_performance(trades, current_price):
     avg_profit = total_profit / successful_trades if successful_trades > 0 else 0
     return performance, avg_profit
 
-# 새로운 함수 추가
-def get_previous_reflections(conn, limit=5):
-    cursor = conn.cursor()
-    cursor.execute("SELECT reflection FROM trades WHERE reflection IS NOT NULL ORDER BY timestamp DESC LIMIT ?", (limit,))
-    return [row[0] for row in cursor.fetchall()]
-
-# generate_reflection 함수 수정
+# Generate reflection
 def generate_reflection(performance, strategies, trades, avg_profit, previous_reflections):
     client = OpenAI()
 
@@ -345,14 +314,11 @@ def generate_reflection(performance, strategies, trades, avg_profit, previous_re
 
     return response.choices[0].message.content
 
+# Calculate volatility
 def calculate_volatility(df, window=14):
-    # 일일 변동성 계산
     df['daily_return'] = df['close'].pct_change()
-
-    # 변동성 (표준편차) 계산
-    volatility = df['daily_return'].rolling(window=window).std() * (252 ** 0.5)  # 연화된 변동성
-
-    return volatility.iloc[-1]  # 가장 최근 변동성 반환
+    volatility = df['daily_return'].rolling(window=window).std() * (252 ** 0.5)
+    return volatility.iloc[-1]
 
 def get_volatility_data():
     df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
@@ -364,11 +330,11 @@ def get_volatility_data():
         "average_volatility": avg_volatility
     }
 
-# MediaStack에서 뉴스 가져오기 (캐싱 적용, 호출 횟수 제한)
+# Get news from MediaStack
 def get_mediastack_news():
     global news_cache
     current_time = datetime.now()
-    if news_cache['mediastack'] is None or (current_time - news_cache['last_update']).total_seconds() > 5400:  # 1.5시간마다 업데이트
+    if news_cache['mediastack'] is None or (current_time - news_cache['last_update']).total_seconds() > 5400:
         url = f"http://api.mediastack.com/v1/news?access_key={MEDIASTACK_API_KEY}&keywords=bitcoin,cryptocurrency&languages=en&limit=10"
         try:
             response = requests.get(url, timeout=10)
@@ -377,15 +343,15 @@ def get_mediastack_news():
             news_cache['mediastack'] = [{'title': item['title'], 'description': item['description']} for item in news]
             news_cache['last_update'] = current_time
         except requests.RequestException as e:
-            logging.error(f"MediaStack API 오류: {str(e)}")
+            logging.error(f"MediaStack API error: {str(e)}")
             return []
     return news_cache['mediastack']
 
-# CryptoCompare에서 뉴스 가져오기 (캐싱 적용, 호출 횟수 제한)
+# Get news from CryptoCompare
 def get_cryptocompare_news():
     global news_cache
     current_time = datetime.now()
-    if news_cache['cryptocompare'] is None or (current_time - news_cache['last_update']).total_seconds() > 1800:  # 30분마다 업데이트
+    if news_cache['cryptocompare'] is None or (current_time - news_cache['last_update']).total_seconds() > 1800:
         url = f"https://min-api.cryptocompare.com/data/v2/news/?lang=EN&api_key={CRYPTOCOMPARE_API_KEY}"
         response = requests.get(url)
         if response.status_code == 200:
@@ -393,7 +359,7 @@ def get_cryptocompare_news():
             news_cache['cryptocompare'] = [{'title': item['title'], 'body': item['body']} for item in news[:10]]
             news_cache['last_update'] = current_time
         else:
-            print(f"CryptoCompare API 오류: {response.status_code}")
+            logging.error(f"CryptoCompare API error: {response.status_code}")
             return []
     return news_cache['cryptocompare']
 
@@ -401,17 +367,17 @@ def get_news():
     mediastack_news = get_mediastack_news()
     cryptocompare_news = get_cryptocompare_news()
 
-    # 뉴스 데이터 정제
+    # Clean news data
     cleaned_news = []
     for news in mediastack_news + cryptocompare_news:
         cleaned_news.append({
-            'title': news.get('title', '')[:100],  # 제목을 100자로 제한
-            'description': news.get('description', '')[:200] if 'description' in news else news.get('body', '')[:200]  # 설명 또는 본문을 200자로 제한
+            'title': news.get('title', '')[:100],
+            'description': news.get('description', '')[:200] if 'description' in news else news.get('body', '')[:200]
         })
 
-    return cleaned_news[:5]  # 최대 5개의 뉴스만 반환
+    return cleaned_news[:5]
 
-# 새로운 함수 추가
+# Get reflection summary
 def get_reflection_summary(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
@@ -474,16 +440,16 @@ def check_balance_for_trade(upbit, decision, percentage):
     if decision == 'buy':
         available_krw = current_status['krw_balance']
         trade_amount = available_krw * (percentage / 100)
-        if trade_amount < 5000:  # 최소 주문 금액
+        if trade_amount < 5000:  # Minimum order amount
             return False, "Insufficient KRW balance for buy order"
     elif decision == 'sell':
         available_btc = current_status['btc_balance']
         trade_amount = available_btc * (percentage / 100)
-        if trade_amount * current_status['btc_price'] < 5000:  # 최소 주문 금액
+        if trade_amount * current_status['btc_price'] < 5000:  # Minimum order amount
             return False, "Insufficient BTC balance for sell order"
     return True, ""
 
-# ai_trading 함수 수정
+# ai_trading function
 def ai_trading():
     logging.info("Starting ai_trading function")
     client = OpenAI()
@@ -695,39 +661,42 @@ def ai_trading():
         conn.close()
         logging.info("Finished ai_trading function")
 
+# Check market volatility
 def check_market_volatility():
     df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
     volatility = (df['high'] - df['low']).mean() / df['open'].mean()
     return volatility
 
+# Check trading volume
 def check_trading_volume():
     df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
     avg_volume = df['volume'].mean()
     return avg_volume
 
+# Updated calculate_trading_interval function
 def calculate_trading_interval(volatility, volume, short_term_necessity):
-    # 기본 간격 (초 단위)
-    base_interval = 28800  # 8시간
+    # Base interval in seconds (8 hours)
+    base_interval = 28800  # 8 hours
 
-    # 변동성, 거래량, 단기 거래 필요성을 0~1 사이의 값으로 정규화
-    normalized_volatility = min(volatility / 0.01, 1)  # 변동성 임계값을 0.01로 수정
-    normalized_volume = min(volume / 150, 1)  # 거래량 임계값을 150으로 수정
+    # Normalize volatility and volume to a 0-1 scale (thresholds remain the same)
+    normalized_volatility = min(volatility / 0.01, 1)
+    normalized_volume = min(volume / 150, 1)
 
-    # 세 요소의 가중 평균 계산
-    combined_factor = (normalized_volatility + normalized_volume + short_term_necessity) / 3
+    # Assign higher weight to short_term_necessity
+    combined_factor = (0.7 * short_term_necessity) + (0.15 * normalized_volatility) + (0.15 * normalized_volume)
 
-    # 로그 함수를 사용하여 간격 조정
-    interval = base_interval * (1 - 0.7 * math.log(combined_factor + 1, 2))
+    # Use an exponential decay function to adjust the interval
+    interval = base_interval * (1 - combined_factor ** 2)
 
-    # 최소 1시간, 최대 8시간으로 제한
+    # Ensure the interval is between 1 hour and 8 hours
     return max(min(interval, 28800), 3600)
 
 def check_market_conditions():
     volatility = check_market_volatility()
     volume = check_trading_volume()
 
-    # 임계값 설정 (변동성 또는 거래량이 기준치를 넘으면 True 반환)
-    if volatility > 0.005 or volume > 100:  # 임계값은 필요에 따라 조정
+    # Thresholds remain unchanged
+    if volatility > 0.005 or volume > 100:
         return True
     return False
 
@@ -741,7 +710,7 @@ def load_next_trade_time():
             data = json.load(f)
             return datetime.fromisoformat(data['next_trade_time'])
     except (FileNotFoundError, KeyError, ValueError):
-        return None  # None을 반환하여 초기화를 구분
+        return None
 
 def save_last_trade_time(last_trade_time):
     with open('last_trade_time.json', 'w') as f:
@@ -753,7 +722,7 @@ def load_last_trade_time():
             data = json.load(f)
             return datetime.fromisoformat(data['last_trade_time'])
     except (FileNotFoundError, KeyError, ValueError):
-        return None  # None을 반환하여 초기화를 구분
+        return None
 
 def acquire_lock(lockfile):
     try:
@@ -794,7 +763,7 @@ def calculate_twr(conn):
     data = cursor.fetchall()
 
     if len(data) < 2:
-        return 0.0  # 또는 다른 적절한 기본값
+        return 0.0
 
     twr = 1
     for i in range(1, len(data)):
@@ -806,7 +775,7 @@ def calculate_twr(conn):
             period_return = (curr_assets - net_flow) / (prev_assets + net_flow)
             twr *= period_return
 
-    return (twr - 1) * 100  # 백분율로 변환
+    return (twr - 1) * 100
 
 def calculate_mwr(conn):
     cursor = conn.cursor()
@@ -821,9 +790,9 @@ def calculate_mwr(conn):
     data = cursor.fetchall()
 
     dates = [(datetime.fromisoformat(row[0]) - datetime.fromisoformat(data[0][0])).days / 365.0 for row in data]
-    cashflows = [-row[1] for row in data]  # 초기 투자를 음수로
-    cashflows[0] += data[0][1]  # 첫 번째 총 자산을 더함
-    cashflows[1:] = [cf + nf for cf, nf in zip(cashflows[1:], [row[2] for row in data[1:]])]  # 순 금액 흐름 추가
+    cashflows = [-row[1] for row in data]
+    cashflows[0] += data[0][1]
+    cashflows[1:] = [cf + nf for cf, nf in zip(cashflows[1:], [row[2] for row in data[1:]])]
 
     def xirr(cashflows, dates):
         def objective(rate):
@@ -833,11 +802,10 @@ def calculate_mwr(conn):
 
     try:
         mwr = xirr(cashflows, dates)
-        return mwr * 100  # 백분율로 변환
+        return mwr * 100
     except:
-        return 0.0  # 또는 다른 적절한 기본값
+        return 0.0
 
-# 초기 자산을 가져오는 함수 추가
 def get_initial_assets(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
@@ -898,7 +866,7 @@ if __name__ == "__main__":
 
         if trade_count == 0:
             logging.info("No trades found. Making first trading decision.")
-            trade_result = ai_trading()  # 첫 번째 거래 결정
+            trade_result = ai_trading()
             last_trade_time = datetime.now()
             short_term_necessity = trade_result.get('short_term_necessity', 0.5)
             
@@ -915,7 +883,6 @@ if __name__ == "__main__":
             last_trade_time = load_last_trade_time()
             next_trade_time = load_next_trade_time()
             if last_trade_time is None or next_trade_time is None:
-                # 만약 파일이 없어서 None이 반환되면 현재 시간으로 초기화
                 last_trade_time = datetime.now()
                 next_trade_time = datetime.now() + timedelta(seconds=MIN_TRADE_INTERVAL)
                 save_last_trade_time(last_trade_time)
@@ -929,7 +896,6 @@ if __name__ == "__main__":
                 time_until_next_trade = (next_trade_time - current_time).total_seconds()
 
                 if time_until_next_trade <= 0:
-                    # Scheduled trade time has arrived
                     trade_result = ai_trading()
                     last_trade_time = datetime.now()
                     short_term_necessity = trade_result.get('short_term_necessity', 0.5)
@@ -945,7 +911,6 @@ if __name__ == "__main__":
                     logging.info(f"Trade decision made at: {current_time}")
                     logging.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
                 else:
-                    # Check market conditions every 5 minutes
                     if check_market_conditions() and time_since_last_trade >= MIN_TRADE_INTERVAL:
                         trade_result = ai_trading()
                         last_trade_time = datetime.now()
@@ -964,11 +929,11 @@ if __name__ == "__main__":
                     else:
                         logging.info(f"Next trade check in {time_until_next_trade/60:.2f} minutes at {next_trade_time}")
 
-                time.sleep(300)  # 5분마다 체크
+                time.sleep(300)  # Check every 5 minutes
 
             except Exception as e:
                 logging.error(f"Error in main loop: {e}")
-                time.sleep(300)  # 오류 발생 시 5분 후 재시도
+                time.sleep(300)  # Retry after 5 minutes if error occurs
 
     except Exception as e:
         logging.error(f"Unexpected error in main script: {e}")
