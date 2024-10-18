@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 import logging
 import json
 from datetime import datetime, timedelta
+import numpy_financial as npf
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,7 +32,11 @@ def init_db():
      daily_profit REAL,
      total_profit REAL,
      total_assets_krw REAL,
-     cumulative_reflection TEXT)
+     cumulative_reflection TEXT,
+     adjusted_profit REAL,
+     twr REAL,
+     mwr REAL,
+     short_term_necessity REAL)
     ''')
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS external_transactions
@@ -65,11 +70,45 @@ def get_trade_data():
         df['btc_krw_value'] = df['btc_balance'] * df['btc_krw_price']
         df['total_assets_btc'] = df['btc_balance'] + (df['krw_balance'] / df['btc_krw_price'])
         df['total_assets_btc_formatted'] = df['total_assets_btc'].apply(lambda x: f"{x:.4e}")
-        df['adjusted_total_profit'] = (df['total_assets_krw'] - df['net_external_flow'] - df['total_assets_krw'].iloc[-1]) / df['total_assets_krw'].iloc[-1]
-    
+        
+        # net_external_flow의 NaN 값을 0으로 대체
+        df['net_external_flow'] = df['net_external_flow'].fillna(0)
+
+        # total_assets_krw.iloc[-1]이 0이 아닌지 확인하여 adjusted_total_profit 계산
+        initial_total_assets = df['total_assets_krw'].iloc[-1]
+        if initial_total_assets != 0:
+            df['adjusted_total_profit'] = (df['total_assets_krw'] - df['net_external_flow'] - initial_total_assets) / initial_total_assets
+        else:
+            df['adjusted_total_profit'] = 0
+        
     return df
 
-# 성과 계산 함수 제거 (데이터베이스에서 직접 가져오므로 필요 없음)
+def calculate_twr(df):
+    df = df.sort_values('timestamp')
+    df['return'] = df['total_assets_krw'].pct_change()
+    df['return'] = df['return'].fillna(0)  # 첫 번째 값 NaN 처리
+    cumulative_return = (1 + df['return']).prod() - 1
+    return cumulative_return * 100  # 백분율로 변환
+
+def calculate_mwr(df):
+    # 현금 흐름과 기간을 이용하여 MWR 계산 (예: XIRR 사용)
+    cash_flows = []
+    dates = []
+    initial_investment = df['net_external_flow'].iloc[-1] if df['net_external_flow'].iloc[-1] != 0 else -df['total_assets_krw'].iloc[-1]
+    cash_flows.append(-initial_investment)
+    dates.append(df['timestamp'].iloc[-1])
+    for i in range(len(df) - 1):
+        flow = df['net_external_flow'].iloc[i] - df['net_external_flow'].iloc[i+1]
+        cash_flows.append(flow)
+        dates.append(df['timestamp'].iloc[i])
+    final_value = df['total_assets_krw'].iloc[0]
+    cash_flows.append(final_value)
+    dates.append(df['timestamp'].iloc[0])
+    try:
+        mwr = npf.irr(cash_flows)  # 날짜 정보 없이 IRR 계산
+    except:
+        mwr = 0
+    return mwr
 
 def get_next_trade_time():
     try:
@@ -158,7 +197,7 @@ def main():
         end_date = st.sidebar.date_input("End Date", max_date, min_value=min_date, max_value=max_date)
         
         if st.sidebar.button('Apply Filter'):
-            st.rerun()
+            st.experimental_rerun()
 
         if start_date <= end_date:
             mask = (df['timestamp'].dt.date >= start_date) & (df['timestamp'].dt.date <= end_date)
@@ -192,9 +231,9 @@ def main():
         with col5:
             st.markdown("<p class='big-font'>Trading Period</p>", unsafe_allow_html=True)
             if len(filtered_df) > 0:
-                start_date = filtered_df['timestamp'].min().strftime('%Y-%m-%d')
-                end_date = filtered_df['timestamp'].max().strftime('%Y-%m-%d')
-                st.markdown(f"<p class='date-font' style='text-align: center;'>{start_date}<br>{end_date}</p>", unsafe_allow_html=True)
+                start_date_str = filtered_df['timestamp'].min().strftime('%Y-%m-%d')
+                end_date_str = filtered_df['timestamp'].max().strftime('%Y-%m-%d')
+                st.markdown(f"<p class='date-font' style='text-align: center;'>{start_date_str}<br>{end_date_str}</p>", unsafe_allow_html=True)
             else:
                 st.markdown("<p class='date-font' style='text-align: center;'>No data</p>", unsafe_allow_html=True)
         with col6:
@@ -212,6 +251,11 @@ def main():
             latest_data = filtered_df.iloc[0]
             weekly_profit = filtered_df['daily_profit'].head(7).sum() if len(filtered_df) >= 7 else filtered_df['daily_profit'].sum()
             monthly_profit = filtered_df['daily_profit'].head(30).sum() if len(filtered_df) >= 30 else filtered_df['daily_profit'].sum()
+            
+            # TWR과 MWR 계산
+            twr_value = calculate_twr(filtered_df)
+            mwr_value = calculate_mwr(filtered_df)
+            
             profit_summary = pd.DataFrame({
                 'Period': ['Daily', 'Weekly', 'Monthly', 'Total', 'TWR', 'MWR'],
                 'Profit': [
@@ -219,8 +263,8 @@ def main():
                     f"{weekly_profit*100:.2f}%",
                     f"{monthly_profit*100:.2f}%",
                     f"{latest_data['total_profit']*100:.2f}%",
-                    f"{latest_data['twr']:.2f}%" if 'twr' in latest_data and latest_data['twr'] is not None else 'N/A',
-                    f"{latest_data['mwr']:.2f}%" if 'mwr' in latest_data and latest_data['mwr'] is not None else 'N/A'
+                    f"{twr_value:.2f}%",
+                    f"{mwr_value:.2f}%"
                 ]
             })
             st.table(profit_summary)
@@ -232,7 +276,7 @@ def main():
             df_display = filtered_df[['timestamp', 'decision', 'percentage', 'reason', 
                                       'btc_balance', 'btc_krw_value', 'krw_balance', 
                                       'total_assets_btc_formatted', 
-                                      'btc_krw_price', 'success', 'short_term_necessity']].head(10)
+                                      'btc_krw_price', 'success']].head(10)
             df_display['success'] = df_display['success'].map({1: 'Success', 0: 'Failure'})
             st.dataframe(df_display, height=300)
         else:
