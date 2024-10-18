@@ -30,7 +30,7 @@ CRYPTOCOMPARE_API_KEY = os.getenv('CRYPTOCOMPARE_API_KEY')
 news_cache = {'mediastack': None, 'cryptocompare': None, 'last_update': None}
 
 # MIN_TRADE_INTERVAL in seconds
-MIN_TRADE_INTERVAL = 3600  # 1 hour
+MIN_TRADE_INTERVAL = 600  # 10 minutes
 
 # Read strategy files
 def read_strategies():
@@ -505,10 +505,10 @@ def ai_trading():
         IMPORTANT: If the current BTC balance is 0, do not make a 'sell' decision.
         
         Additionally, evaluate the necessity for short-term trading based on current market conditions. 
-        The trading interval can be adjusted between 1 hour (for very short-term trading) and 8 hours (for longer-term trading).
+        The trading interval can be adjusted between 10 minutes (for very short-term trading) and 8 hours (for longer-term trading).
         Provide a short-term trading necessity score from 0 to 1, where:
         0: No need for short-term trading, prefer longer intervals (closer to 8 hours)
-        1: High necessity for short-term trading, prefer shorter intervals (closer to 1 hour)
+        1: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
         Base this score on market volatility, recent news impact, and potential short-term opportunities."""
 
         response = client.chat.completions.create(
@@ -579,8 +579,12 @@ def ai_trading():
                            reflection=message,
                            cumulative_reflection=updated_summary)
             else:
-                trade_amount = current_status['krw_balance'] * (percentage / 100) if decision == 'buy' else current_status['btc_balance'] * (percentage / 100)
-                
+                if decision == 'buy':
+                    trade_amount = current_status['krw_balance'] * (percentage / 100)
+                else:  # sell
+                    trade_amount = current_status['btc_balance'] * (percentage / 100)
+                    trade_amount = round(trade_amount, 8)  # Round to 8 decimal places for BTC
+
                 try:
                     if decision == 'buy':
                         order = upbit.buy_market_order("KRW-BTC", trade_amount)
@@ -675,28 +679,30 @@ def check_trading_volume():
 
 # Updated calculate_trading_interval function
 def calculate_trading_interval(volatility, volume, short_term_necessity):
-    # Base interval in seconds (8 hours)
-    base_interval = 28800  # 8 hours
+    # Interval range in seconds
+    min_interval = 600    # 10 minutes
+    max_interval = 28800  # 8 hours
 
-    # Normalize volatility and volume to a 0-1 scale (thresholds remain the same)
+    # Normalize volatility and volume to a 0-1 scale
     normalized_volatility = min(volatility / 0.01, 1)
     normalized_volume = min(volume / 150, 1)
 
-    # Assign higher weight to short_term_necessity
+    # Assign weights to factors
     combined_factor = (0.7 * short_term_necessity) + (0.15 * normalized_volatility) + (0.15 * normalized_volume)
 
-    # Use an exponential decay function to adjust the interval
-    interval = base_interval * (1 - combined_factor ** 2)
+    # Linearly adjust the interval based on the combined_factor
+    interval = max_interval - (combined_factor * (max_interval - min_interval))
 
-    # Ensure the interval is between 1 hour and 8 hours
-    return max(min(interval, 28800), 3600)
+    # Ensure the interval is between min_interval and max_interval
+    interval = max(min(interval, max_interval), min_interval)
+
+    return interval
 
 def check_market_conditions():
     volatility = check_market_volatility()
     volume = check_trading_volume()
 
-    # Thresholds remain unchanged
-    if volatility > 0.005 or volume > 100:
+    if volatility > 0.01 or volume > 150:
         return True
     return False
 

@@ -50,3 +50,6 @@ Thumbs.db
 # Project specific
 next_trade_time.json
 last_trade_time.json
+
+
+check_market_conditions.py
