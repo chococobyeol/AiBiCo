@@ -204,7 +204,7 @@ def init_db():
         raise
 
 # 거래 이터 저장 함수 수정
-def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None):
+def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, adjusted_profit=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
     
@@ -251,9 +251,9 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
 
     try:
         cursor.execute('''
-        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr))
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr, adjusted_profit)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection, twr, mwr, adjusted_profit))
         conn.commit()
         logging.info(f"Trade saved successfully: {decision}, {success}")
     except sqlite3.Error as e:
@@ -344,7 +344,7 @@ def calculate_volatility(df, window=14):
     df['daily_return'] = df['close'].pct_change()
     
     # 변동 (준편차) 계산
-    volatility = df['daily_return'].rolling(window=window).std() * (252 ** 0.5)  # 연간화된 동성
+    volatility = df['daily_return'].rolling(window=window).std() * (252 ** 0.5)  # 연화된 동성
     
     return volatility.iloc[-1]  # 가장 최근 변동성 반환
 
@@ -405,7 +405,7 @@ def get_news():
     
     return cleaned_news[:5]  # 최대 5개의 뉴스만 반환
 
-# 새로운 함수 추가
+# ��로운 함수 추가
 def get_reflection_summary(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
@@ -794,6 +794,13 @@ def calculate_mwr(conn):
         return mwr * 100  # 백분율로 변환
     except:
         return 0.0  # 또는 다른 적절한 기본값
+
+# 초기 자산을 가져오는 함수 추가
+def get_initial_assets(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
+    result = cursor.fetchone()
+    return result[0] if result else 0
 
 if __name__ == "__main__":
     lockfile = '/tmp/autotrade.lock'
