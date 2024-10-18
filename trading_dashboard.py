@@ -91,7 +91,10 @@ def calculate_twr(df):
     return cumulative_return * 100  # 백분율로 변환
 
 def calculate_mwr(df):
-    # 현금 흐름과 기간을 이용하여 MWR 계산 (예: XIRR 사용)
+    if len(df) < 2:
+        print("Not enough data to calculate MWR")
+        return 0  # 또는 다른 기본값
+
     cash_flows = []
     dates = []
     initial_investment = df['net_external_flow'].iloc[-1] if df['net_external_flow'].iloc[-1] != 0 else -df['total_assets_krw'].iloc[-1]
@@ -104,11 +107,19 @@ def calculate_mwr(df):
     final_value = df['total_assets_krw'].iloc[0]
     cash_flows.append(final_value)
     dates.append(df['timestamp'].iloc[0])
+    
+    print("Cash flows:", cash_flows)
+    print("Dates:", dates)
+    
     try:
-        mwr = npf.irr(cash_flows)  # 날짜 정보 없이 IRR 계산
-    except:
-        mwr = 0
-    return mwr
+        mwr = npf.irr(cash_flows)
+        if np.isnan(mwr):
+            print("IRR calculation resulted in NaN")
+            return 0
+        return mwr
+    except Exception as e:
+        print(f"Error in MWR calculation: {e}")
+        return 0
 
 def get_next_trade_time():
     try:
