@@ -100,8 +100,21 @@ def calculate_mwr(df):
     if 'mwr' in df.columns and not df['mwr'].isnull().all():
         return df['mwr'].iloc[-1]
     else:
-        # MWR 계산 로직을 여기에 추가할 수 있습니다.
-        return 0.0
+        cashflows = df['total_assets_krw'].diff().fillna(df['total_assets_krw'])
+        dates = pd.to_datetime(df['timestamp'])
+
+        def npv(rate):
+            total = 0.0
+            for cf, date in zip(cashflows, dates):
+                days = (date - dates.iloc[0]).days
+                total += cf / ((1 + rate) ** (days / 365.0))
+            return total
+
+        try:
+            result = optimize.newton(npv, 0.1)
+            return result * 100  # 백분율로 변환
+        except (RuntimeError, OverflowError, ValueError):
+            return None
 
 def get_next_trade_time():
     try:
@@ -257,7 +270,7 @@ def main():
                     f"{monthly_profit*100:.2f}%",
                     f"{latest_data['total_profit']*100:.2f}%",
                     f"{twr_value:.2f}%",
-                    f"{mwr_value:.2f}%" if mwr_value != 0 else "N/A"
+                    f"{mwr_value:.2f}%"
                 ]
             })
             st.table(profit_summary)
@@ -269,7 +282,8 @@ def main():
             df_display = filtered_df[['timestamp', 'decision', 'percentage', 'reason', 
                                       'btc_balance', 'btc_krw_value', 'krw_balance', 
                                       'total_assets_krw', 'total_assets_btc_formatted', 
-                                      'btc_krw_price', 'success', 'short_term_necessity']].tail(10)
+                                      'btc_krw_price', 'success', 'short_term_necessity']].head(10)
+            df_display = df_display.sort_values('timestamp', ascending=False)  # 최근 거래가 위로 오도록 정렬
             df_display['success'] = df_display['success'].map({1: 'Success', 0: 'Failure'})
             st.dataframe(df_display, height=300)
         else:
