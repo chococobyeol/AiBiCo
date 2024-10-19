@@ -125,6 +125,24 @@ def get_next_trade_time():
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return None
 
+def calculate_period_profits(df):
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.sort_values('timestamp')
+    
+    # 일간 수익률 계산
+    df['date'] = df['timestamp'].dt.date
+    daily_profits = df.groupby('date')['trade_profit'].sum()
+    
+    # 주간 수익률 계산
+    df['week'] = df['timestamp'].dt.to_period('W')
+    weekly_profits = df.groupby('week')['trade_profit'].sum()
+    
+    # 월간 수익률 계산
+    df['month'] = df['timestamp'].dt.to_period('M')
+    monthly_profits = df.groupby('month')['trade_profit'].sum()
+    
+    return daily_profits, weekly_profits, monthly_profits
+
 # 메인 대시보드 함수
 def main():
     st.set_page_config(layout="wide", page_title="AiBiCo Trading Dashboard", initial_sidebar_state="collapsed")
@@ -253,21 +271,27 @@ def main():
                 st.markdown("<p class='date-font' style='text-align: center;'>No information</p>", unsafe_allow_html=True)
 
         st.markdown("<h2>Profit Summary</h2>", unsafe_allow_html=True)
-        if 'daily_profit' in filtered_df.columns and 'total_profit' in filtered_df.columns and len(filtered_df) > 0:
-            latest_data = filtered_df.iloc[-1]
-            weekly_profit = filtered_df['daily_profit'].tail(7).sum() if len(filtered_df) >= 7 else filtered_df['daily_profit'].sum()
-            monthly_profit = filtered_df['daily_profit'].tail(30).sum() if len(filtered_df) >= 30 else filtered_df['daily_profit'].sum()
+        if 'trade_profit' in df.columns and 'total_profit' in df.columns and len(df) > 0:
+            latest_data = df.iloc[-1]
+            daily_profits, weekly_profits, monthly_profits = calculate_period_profits(df)
+            
+            # 최근 거래, 일간, 주간, 월간 수익률 계산
+            latest_trade_profit = latest_data['trade_profit']
+            latest_daily_profit = daily_profits.iloc[-1] if len(daily_profits) > 0 else 0
+            latest_weekly_profit = weekly_profits.iloc[-1] if len(weekly_profits) > 0 else 0
+            latest_monthly_profit = monthly_profits.iloc[-1] if len(monthly_profits) > 0 else 0
             
             # TWR과 MWR 값 가져오기
-            twr_value = latest_data['twr'] if not pd.isnull(latest_data['twr']) else calculate_twr(filtered_df)
-            mwr_value = latest_data['mwr'] if not pd.isnull(latest_data['mwr']) else calculate_mwr(filtered_df)
+            twr_value = latest_data['twr'] if not pd.isnull(latest_data['twr']) else calculate_twr(df)
+            mwr_value = latest_data['mwr'] if not pd.isnull(latest_data['mwr']) else calculate_mwr(df)
             
             profit_summary = pd.DataFrame({
-                'Period': ['Daily', 'Weekly', 'Monthly', 'Total', 'TWR', 'MWR'],
+                'Period': ['Latest Trade', 'Latest Day', 'Latest Week', 'Latest Month', 'Total', 'TWR', 'MWR'],
                 'Profit': [
-                    f"{latest_data['daily_profit']*100:.2f}%",
-                    f"{weekly_profit*100:.2f}%",
-                    f"{monthly_profit*100:.2f}%",
+                    f"{latest_trade_profit*100:.2f}%",
+                    f"{latest_daily_profit*100:.2f}%",
+                    f"{latest_weekly_profit*100:.2f}%",
+                    f"{latest_monthly_profit*100:.2f}%",
                     f"{latest_data['total_profit']*100:.2f}%",
                     f"{twr_value:.2f}%",
                     f"{mwr_value:.2f}%"
@@ -292,15 +316,15 @@ def main():
         st.markdown("<h2>Trading Performance</h2>", unsafe_allow_html=True)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Cumulative Profit', 'BTC Price'))
         
-        if 'total_profit' not in filtered_df.columns:
-            if 'daily_profit' in filtered_df.columns:
-                filtered_df['total_profit'] = filtered_df['daily_profit'].cumsum()
+        if 'total_profit' not in df.columns:
+            if 'daily_profit' in df.columns:
+                df['total_profit'] = df['daily_profit'].cumsum()
             else:
                 st.warning("No profit data available. Unable to display chart.")
                 return
 
-        fig.add_trace(go.Scatter(x=filtered_df['timestamp'], y=filtered_df['total_profit'], mode='lines', name='Cumulative Profit'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=filtered_df['timestamp'], y=filtered_df['btc_krw_price'], mode='lines', name='BTC Price'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['total_profit'], mode='lines', name='Cumulative Profit'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['btc_krw_price'], mode='lines', name='BTC Price'), row=2, col=1)
         fig.update_layout(height=600, width=1000)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -309,43 +333,43 @@ def main():
         
         with col1:
             st.markdown("<h3>Trade Decision Distribution</h3>", unsafe_allow_html=True)
-            decision_counts = filtered_df['decision'].value_counts()
+            decision_counts = df['decision'].value_counts()
             decision_counts = decision_counts[decision_counts.index.isin(['buy', 'sell', 'hold'])]
             fig = go.Figure(data=[go.Pie(labels=decision_counts.index, values=decision_counts.values)])
             st.plotly_chart(fig, use_container_width=True)
 
         with col2:
             st.markdown("<h3>Trade Success/Failure Ratio</h3>", unsafe_allow_html=True)
-            success_counts = filtered_df['success'].value_counts()
+            success_counts = df['success'].value_counts()
             fig = go.Figure(data=[go.Pie(labels=['Success', 'Failure'], values=[success_counts.get(1, 0), success_counts.get(0, 0)])])
             st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("<h3>BTC Balance Change</h3>", unsafe_allow_html=True)
-        fig = go.Figure(data=[go.Scatter(x=filtered_df['timestamp'], y=filtered_df['btc_balance'], mode='lines')])
+        fig = go.Figure(data=[go.Scatter(x=df['timestamp'], y=df['btc_balance'], mode='lines')])
         fig.update_layout(title='BTC Balance Over Time', xaxis_title='Timestamp', yaxis_title='BTC Balance')
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("<h3>KRW Balance Change</h3>", unsafe_allow_html=True)
-        fig = go.Figure(data=[go.Scatter(x=filtered_df['timestamp'], y=filtered_df['krw_balance'], mode='lines')])
+        fig = go.Figure(data=[go.Scatter(x=df['timestamp'], y=df['krw_balance'], mode='lines')])
         fig.update_layout(title='KRW Balance Over Time', xaxis_title='Timestamp', yaxis_title='KRW Balance')
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("<h3>BTC Average Buy Price Change</h3>", unsafe_allow_html=True)
-        fig = go.Figure(data=[go.Scatter(x=filtered_df['timestamp'], y=filtered_df['btc_avg_buy_price'], mode='lines')])
+        fig = go.Figure(data=[go.Scatter(x=df['timestamp'], y=df['btc_avg_buy_price'], mode='lines')])
         fig.update_layout(title='BTC Average Buy Price Over Time', xaxis_title='Timestamp', yaxis_title='BTC Average Buy Price')
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("<h2>Latest Reflection</h2>", unsafe_allow_html=True)
-        if 'reflection' in filtered_df.columns and len(filtered_df) > 0:
-            latest_reflection = filtered_df.loc[filtered_df['reflection'].notna(), 'reflection'].iloc[-1] if not filtered_df['reflection'].isna().all() else "No reflection available."
+        if 'reflection' in df.columns and len(df) > 0:
+            latest_reflection = df.loc[df['reflection'].notna(), 'reflection'].iloc[-1] if not df['reflection'].isna().all() else "No reflection available."
         else:
             latest_reflection = "No reflection available."
         
         st.markdown(f"<p class='small-font' style='text-align: center;'>{latest_reflection}</p>", unsafe_allow_html=True)
 
         st.markdown("<h2>Reflection History</h2>", unsafe_allow_html=True)
-        if 'reflection' in filtered_df.columns and 'cumulative_reflection' in filtered_df.columns:
-            reflection_df = filtered_df[['timestamp', 'decision', 'reflection', 'cumulative_reflection']].dropna(subset=['reflection'])
+        if 'reflection' in df.columns and 'cumulative_reflection' in df.columns:
+            reflection_df = df[['timestamp', 'decision', 'reflection', 'cumulative_reflection']].dropna(subset=['reflection'])
             if not reflection_df.empty:
                 reflection_df = reflection_df.sort_values('timestamp', ascending=False)  # 최근 반성이 위로 오도록 정렬
                 st.dataframe(reflection_df, height=300)

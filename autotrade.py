@@ -166,7 +166,7 @@ def init_db():
          btc_krw_price REAL,
          success INTEGER,
          reflection TEXT,
-         daily_profit REAL,
+         trade_profit REAL,
          total_profit REAL,
          total_assets_krw REAL,
          cumulative_reflection TEXT,
@@ -186,7 +186,7 @@ def init_db():
 
         # 새로운 열 추가(존재하지 않는 경우)
         columns_to_add = [
-            ('daily_profit', 'REAL'),
+            ('trade_profit', 'REAL'),
             ('total_profit', 'REAL'),
             ('total_assets_krw', 'REAL'),
             ('cumulative_reflection', 'TEXT'),
@@ -235,11 +235,11 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
     else:
         previous_total_assets = total_assets_krw  # 첫 거래인 경우 현재 자산으로 설정
 
-    # 일일 수익률 계산
+    # 거래당 수익률 계산
     if previous_total_assets != 0:
-        daily_profit = (total_assets_krw - previous_total_assets) / previous_total_assets
+        trade_profit = (total_assets_krw - previous_total_assets) / previous_total_assets
     else:
-        daily_profit = 0
+        trade_profit = 0
 
     # 초기 총 자산 가져오기
     cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
@@ -262,11 +262,11 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
     try:
         cursor.execute('''
         INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price,
-                            btc_krw_price, success, reflection, daily_profit, total_profit, total_assets_krw,
+                            btc_krw_price, success, reflection, trade_profit, total_profit, total_assets_krw,
                             cumulative_reflection, adjusted_profit, short_term_necessity, twr, mwr)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price,
-              int(success), reflection, daily_profit, total_profit, total_assets_krw, cumulative_reflection,
+              int(success), reflection, trade_profit, total_profit, total_assets_krw, cumulative_reflection,
               adjusted_profit, short_term_necessity, twr_value, mwr_value))
         conn.commit()
         logging.info(f"거래가 성공적으로 저장되었습니다: {decision}, {success}")
