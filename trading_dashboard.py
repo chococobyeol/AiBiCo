@@ -347,6 +347,7 @@ def main():
         if 'reflection' in filtered_df.columns and 'cumulative_reflection' in filtered_df.columns:
             reflection_df = filtered_df[['timestamp', 'decision', 'reflection', 'cumulative_reflection']].dropna(subset=['reflection'])
             if not reflection_df.empty:
+                reflection_df = reflection_df.sort_values('timestamp', ascending=False)  # 최근 반성이 위로 오도록 정렬
                 st.dataframe(reflection_df, height=300)
             else:
                 st.info("No reflections recorded for any trades.")
