@@ -146,128 +146,57 @@ def get_fear_and_greed_index():
 
 # SQLite 데이터베이스 초기화
 def init_db():
-    db_path = os.path.join(os.path.dirname(__file__), 'trading_history.db')
-    logging.info(f"Initializing database at {db_path}")
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
-        # 거래 테이블 생성
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS trades
-        (id INTEGER PRIMARY KEY AUTOINCREMENT,
-         timestamp TEXT,
-         decision TEXT,
-         percentage REAL,
-         reason TEXT,
-         btc_balance REAL,
-         krw_balance REAL,
-         btc_avg_buy_price REAL,
-         btc_krw_price REAL,
-         success INTEGER,
-         reflection TEXT,
-         trade_profit REAL,
-         total_profit REAL,
-         total_assets_krw REAL,
-         cumulative_reflection TEXT,
-         adjusted_profit REAL,
-         twr REAL,
-         mwr REAL,
-         short_term_necessity REAL)
-        ''')
-
-        # 반성 요약 테이블 생성
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reflection_summary
-        (id INTEGER PRIMARY KEY AUTOINCREMENT,
-         summary TEXT,
-         timestamp TEXT)
-        ''')
-
-        # 새로운 열 추가(존재하지 않는 경우)
-        columns_to_add = [
-            ('trade_profit', 'REAL'),
-            ('total_profit', 'REAL'),
-            ('total_assets_krw', 'REAL'),
-            ('cumulative_reflection', 'TEXT'),
-            ('adjusted_profit', 'REAL'),
-            ('twr', 'REAL'),
-            ('mwr', 'REAL'),
-            ('short_term_necessity', 'REAL')
-        ]
-
-        for column_name, column_type in columns_to_add:
-            try:
-                cursor.execute(f"ALTER TABLE trades ADD COLUMN {column_name} {column_type}")
-                logging.info(f"Added column {column_name} to trades table")
-            except sqlite3.OperationalError:
-                logging.info(f"Column {column_name} already exists in trades table")
-
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS external_transactions
-        (id INTEGER PRIMARY KEY AUTOINCREMENT,
-         timestamp TEXT,
-         type TEXT,
-         amount REAL,
-         currency TEXT)
-        ''')
-
-        conn.commit()
-        logging.info("Database initialized successfully")
-        return conn
-    except sqlite3.Error as e:
-        logging.error(f"Database initialization error: {e}")
-        raise
+    conn = sqlite3.connect('trading_history.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS trades
+    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+     timestamp TEXT,
+     decision TEXT,
+     percentage REAL,
+     reason TEXT,
+     btc_balance REAL,
+     krw_balance REAL,
+     btc_avg_buy_price REAL,
+     btc_krw_price REAL,
+     success INTEGER,
+     reflection TEXT,
+     total_assets_krw REAL,
+     cumulative_reflection TEXT,
+     short_term_necessity REAL)
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS external_transactions
+    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+     timestamp TEXT,
+     type TEXT,
+     amount REAL,
+     currency TEXT)
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS reflection_summary
+    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+     summary TEXT,
+     timestamp TEXT)
+    ''')
+    conn.commit()
+    return conn
 
 # 거래 데이터 저장
-def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, adjusted_profit=None, short_term_necessity=None, twr=None, mwr=None):
+def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, short_term_necessity=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
 
     # 총 자산(KRW) 계산
     total_assets_krw = krw_balance + (btc_balance * btc_krw_price)
 
-    # 이전 총 자산 가져오기
-    cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp DESC LIMIT 1")
-    previous_total_assets_row = cursor.fetchone()
-    if (previous_total_assets_row):
-        previous_total_assets = previous_total_assets_row[0]
-    else:
-        previous_total_assets = total_assets_krw  # 첫 거래인 경우 현재 자산으로 설정
-
-    # 거래당 수익률 계산
-    if previous_total_assets != 0:
-        trade_profit = (total_assets_krw - previous_total_assets) / previous_total_assets
-    else:
-        trade_profit = 0
-
-    # 초기 총 자산 가져오기
-    cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
-    initial_total_assets_row = cursor.fetchone()
-    if (initial_total_assets_row):
-        initial_total_assets = initial_total_assets_row[0]
-    else:
-        initial_total_assets = total_assets_krw  # 첫 거래인 경우 현재 자산으로 설정
-
-    # 총 수익률 계산
-    if initial_total_assets != 0:
-        total_profit = (total_assets_krw - initial_total_assets) / initial_total_assets
-    else:
-        total_profit = 0
-
-    # TWR과 MWR 계산
-    twr_value = calculate_twr(conn)
-    mwr_value = calculate_mwr(conn)
-
     try:
         cursor.execute('''
         INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price,
-                            btc_krw_price, success, reflection, trade_profit, total_profit, total_assets_krw,
-                            cumulative_reflection, adjusted_profit, short_term_necessity, twr, mwr)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            btc_krw_price, success, reflection, total_assets_krw, cumulative_reflection, short_term_necessity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price,
-              int(success), reflection, trade_profit, total_profit, total_assets_krw, cumulative_reflection,
-              adjusted_profit, short_term_necessity, twr_value, mwr_value))
+              int(success), reflection, total_assets_krw, cumulative_reflection, short_term_necessity))
         conn.commit()
         logging.info(f"거래가 성공적으로 저장되었습니다: {decision}, {success}")
     except sqlite3.Error as e:
@@ -724,12 +653,6 @@ def ai_trading():
                             raise Exception(f"Order failed: {order['error']['message']}")
 
                         updated_status = get_current_status(upbit)
-                        current_assets = updated_status['krw_balance'] + (updated_status['btc_balance'] * updated_status['btc_price'])
-                        adjusted_profit = calculate_adjusted_profit(conn, current_assets)
-
-                        # TWR과 MWR 계산
-                        twr_value = calculate_twr(conn)
-                        mwr_value = calculate_mwr(conn)
 
                         save_trade(conn,
                                    decision,
@@ -742,10 +665,7 @@ def ai_trading():
                                    success=True,
                                    reflection=reflection,
                                    cumulative_reflection=updated_summary,
-                                   adjusted_profit=adjusted_profit,
-                                   short_term_necessity=short_term_necessity,
-                                   twr=twr_value,
-                                   mwr=mwr_value)
+                                   short_term_necessity=short_term_necessity)
                         logging.info(f"Trade saved: {decision}, {percentage}%, {reason}")
 
                         logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
@@ -765,10 +685,6 @@ def ai_trading():
                                    short_term_necessity=short_term_necessity)
             else:
                 logging.info(f"Decision: Hold. Reason: {reason}")
-                # TWR과 MWR 계산
-                twr_value = calculate_twr(conn)
-                mwr_value = calculate_mwr(conn)
-
                 save_trade(conn,
                            'hold',
                            0,
@@ -780,20 +696,13 @@ def ai_trading():
                            success=True,
                            reflection=reflection,
                            cumulative_reflection=updated_summary,
-                           adjusted_profit=None,
-                           short_term_necessity=short_term_necessity,
-                           twr=twr_value,
-                           mwr=mwr_value)
+                           short_term_necessity=short_term_necessity)
                 logging.info(f"Hold decision saved: {reason}")
 
             return {'short_term_necessity': short_term_necessity}
 
         except Exception as e:
             logging.error(f"Error in ai_trading: {str(e)}")
-            # TWR과 MWR 계산
-            twr_value = calculate_twr(conn)
-            mwr_value = calculate_mwr(conn)
-
             save_trade(conn,
                        'error',
                        0,
@@ -805,9 +714,7 @@ def ai_trading():
                        success=False,
                        reflection="Error in ai_trading function",
                        cumulative_reflection="Error occurred during trading",
-                       short_term_necessity=None,
-                       twr=twr_value,
-                       mwr=mwr_value)
+                       short_term_necessity=None)
             logging.info("Error trade saved")
             return {'short_term_necessity': None}
         finally:
@@ -1041,3 +948,4 @@ if __name__ == "__main__":
         if os.path.exists(lockfile):
             os.remove(lockfile)
         logging.info("Autotrade 스크립트 종료.")
+
