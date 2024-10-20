@@ -46,7 +46,7 @@ def read_strategies():
     for file in strategy_files:
         if file.endswith('.txt'):
             with open(os.path.join('strategies', file), 'r', encoding='utf-8') as f:
-                strategies += f.read() + "\n\n"
+                strategies += f.read()[:500] + "\n\n"  # 각 전략 파일의 처음 500자만 읽기
     return strategies
 
 # 현재 계좌 상태 가져오기
@@ -94,15 +94,14 @@ def get_simplified_orderbook():
 
 # 기술 지표가 포함된 간단한 차트 데이터 가져오기
 def get_simplified_chart_data():
-    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)  # 30일로 변경
+    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=15)  # 15일로 변경
     df_daily = dropna(df_daily)
     df_daily = add_indicators(df_daily)
     
-    df_10min = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=144)  # 24 hours of 10-minute data
+    df_10min = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=72)  # 12 hours of 10-minute data
     df_10min = dropna(df_10min)
     df_10min = add_indicators(df_10min)
 
-    # DataFrame을 딕셔너리로 변환하고 Timestamp를 문자열로 변환
     def df_to_dict(df):
         df_dict = df.to_dict(orient='index')
         return {k.isoformat(): v for k, v in df_dict.items()}
@@ -178,7 +177,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         conn.rollback()
 
 # 최근 거래 가져오기 함수 수정
-def get_recent_trades(conn, days=7, limit=None):
+def get_recent_trades(conn, days=7, limit=5):  # limit를 5로 변경
     cursor = conn.cursor()
     one_week_ago = (datetime.now() - timedelta(days=days)).isoformat()
 
@@ -319,7 +318,7 @@ def get_news():
             'description': news.get('description', '')[:200] if 'description' in news else news.get('body', '')[:200]
         })
 
-    return cleaned_news[:5]
+    return cleaned_news[:3]  # 뉴스 헤드라인 수를 3개로 제한
 
 # 반성 요약 가져오기
 def get_reflection_summary(conn):
@@ -465,7 +464,7 @@ def ai_trading():
                            reflection="Initial trade data",
                            cumulative_reflection="Starting trading")
 
-            recent_trades = get_recent_trades(conn, limit=10)
+            recent_trades = get_recent_trades(conn, limit=5)
             current_price = pyupbit.get_current_price("KRW-BTC")
             performance, avg_profit = analyze_performance(recent_trades, current_price)
             strategies = read_strategies()
@@ -511,14 +510,13 @@ def ai_trading():
                     {"role": "user", "content": f"""
 Current investment status: {json.dumps(current_status_serializable)}
 Orderbook: {json.dumps(orderbook_serializable)}
-Daily OHLCV with indicators (recent 30 days): {json.dumps(chart_data_serializable['daily'])}
-10-minute OHLCV with indicators (recent 24 hours): {json.dumps(chart_data_serializable['10min'])}
+Daily OHLCV with indicators (recent 15 days): {json.dumps(chart_data_serializable['daily'])}
+10-minute OHLCV with indicators (recent 12 hours): {json.dumps(chart_data_serializable['10min'])}
 Recent news headlines: {json.dumps(news_serializable)}
 Fear and Greed Index: {json.dumps(fear_greed_index_serializable)}
 Volatility data: {json.dumps(volatility_data_serializable)}
 Strategies: {strategies}
-Recent trades: {json.dumps(recent_trades_serializable)}
-Performance: {json.dumps(performance_serializable)}
+Recent trades (last 5): {json.dumps(recent_trades_serializable)}
 Average profit: {avg_profit}
 Reflection: {reflection}
 
