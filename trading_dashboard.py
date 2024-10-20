@@ -32,13 +32,8 @@ def init_db():
      btc_krw_price REAL,
      success INTEGER,
      reflection TEXT,
-     daily_profit REAL,
-     total_profit REAL,
      total_assets_krw REAL,
      cumulative_reflection TEXT,
-     adjusted_profit REAL,
-     twr REAL,
-     mwr REAL,
      short_term_necessity REAL)
     ''')
     cursor.execute('''
@@ -77,13 +72,6 @@ def get_trade_data():
         
         # net_external_flow의 NaN 값을 0으로 대체
         df['net_external_flow'] = df['net_external_flow'].fillna(0)
-
-        # Adjusted Total Profit 계산 수정
-        initial_total_assets = df['total_assets_krw'].iloc[0]
-        if initial_total_assets != 0:
-            df['adjusted_total_profit'] = (df['total_assets_krw'] - initial_total_assets - df['net_external_flow']) / initial_total_assets
-        else:
-            df['adjusted_total_profit'] = 0
         
     return df
 
@@ -108,7 +96,7 @@ def calculate_profit(initial_value, final_value):
         return 0
     return (final_value - initial_value) / initial_value * 100
 
-# 수익 계산 함수 추가
+# 수익 계산 함수 수정
 def calculate_profits(df):
     if len(df) == 0:
         return 0, 0, 0, 0, 0
@@ -245,11 +233,8 @@ def main():
             st.markdown(f"<p class='value-font' style='text-align: center;'>{success_rate:.2f}%</p>", unsafe_allow_html=True)
         with col3:
             st.markdown("<p class='big-font'>Total Profit</p>", unsafe_allow_html=True)
-            if 'adjusted_total_profit' in filtered_df.columns and len(filtered_df) > 0:
-                total_profit = filtered_df['adjusted_total_profit'].iloc[-1] * 100
-                st.markdown(f"<p class='value-font' style='text-align: center;'>{total_profit:.5f}%</p>", unsafe_allow_html=True)
-            else:
-                st.markdown("<p class='value-font' style='text-align: center;'>N/A</p>", unsafe_allow_html=True)
+            total_profit = calculate_profit(filtered_df['total_assets_krw'].iloc[0], filtered_df['total_assets_krw'].iloc[-1])
+            st.markdown(f"<p class='value-font' style='text-align: center;'>{total_profit:.5f}%</p>", unsafe_allow_html=True)
         with col4:
             st.markdown("<p class='big-font'>BTC Price</p>", unsafe_allow_html=True)
             current_price = filtered_df['btc_krw_price'].iloc[-1] if len(filtered_df) > 0 else 0
@@ -303,14 +288,10 @@ def main():
         st.markdown("<h2>Trading Performance</h2>", unsafe_allow_html=True)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Cumulative Profit', 'BTC Price'))
         
-        if 'total_profit' not in df.columns:
-            if 'daily_profit' in df.columns:
-                df['total_profit'] = df['daily_profit'].cumsum()
-            else:
-                st.warning("No profit data available. Unable to display chart.")
-                return
+        # Cumulative Profit 계산
+        df['cumulative_profit'] = (df['total_assets_krw'] / df['total_assets_krw'].iloc[0] - 1) * 100
 
-        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['total_profit'], mode='lines', name='Cumulative Profit'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['cumulative_profit'], mode='lines', name='Cumulative Profit'), row=1, col=1)
         fig.add_trace(go.Scatter(x=df['timestamp'], y=df['btc_krw_price'], mode='lines', name='BTC Price'), row=2, col=1)
         fig.update_layout(height=600, width=1000)
         st.plotly_chart(fig, use_container_width=True)
@@ -397,4 +378,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
