@@ -65,28 +65,24 @@ def get_current_status(upbit):
 def get_simplified_orderbook():
     try:
         orderbook = pyupbit.get_orderbook("KRW-BTC")
-        logging.info(f"Received orderbook: {orderbook}")  # 로그 추가
-        if orderbook and isinstance(orderbook, list) and len(orderbook) > 0:
-            first_orderbook = orderbook[0]
-            if 'orderbook_units' in first_orderbook and len(first_orderbook['orderbook_units']) > 0:
-                return {
-                    "ask_price": first_orderbook['orderbook_units'][0]['ask_price'],
-                    "bid_price": first_orderbook['orderbook_units'][0]['bid_price'],
-                    "ask_size": first_orderbook['orderbook_units'][0]['ask_size'],
-                    "bid_size": first_orderbook['orderbook_units'][0]['bid_size']
-                }
-            else:
-                logging.warning("Orderbook structure is not as expected")
-        else:
-            logging.warning("Empty or invalid orderbook received from pyupbit.get_orderbook()")
+        logging.info(f"Received orderbook: {orderbook}")
         
-        # 기본값 반환
-        return {
-            "ask_price": 0,
-            "bid_price": 0,
-            "ask_size": 0,
-            "bid_size": 0
-        }
+        if orderbook and isinstance(orderbook, dict) and 'orderbook_units' in orderbook and len(orderbook['orderbook_units']) > 0:
+            first_unit = orderbook['orderbook_units'][0]
+            return {
+                "ask_price": first_unit['ask_price'],
+                "bid_price": first_unit['bid_price'],
+                "ask_size": first_unit['ask_size'],
+                "bid_size": first_unit['bid_size']
+            }
+        else:
+            logging.warning("Orderbook structure is not as expected")
+            return {
+                "ask_price": 0,
+                "bid_price": 0,
+                "ask_size": 0,
+                "bid_size": 0
+            }
     except Exception as e:
         logging.error(f"Error in get_simplified_orderbook: {str(e)}", exc_info=True)
         return {
@@ -98,22 +94,13 @@ def get_simplified_orderbook():
 
 # 기술 지표가 포함된 간단한 차트 데이터 가져오기
 def get_simplified_chart_data():
-    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=180)
+    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)  # 30일로 변경
     df_daily = dropna(df_daily)
     df_daily = add_indicators(df_daily)
-    
-    df_hourly = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=168)  # 7 days of hourly data
-    df_hourly = dropna(df_hourly)
-    df_hourly = add_indicators(df_hourly)
     
     df_10min = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=144)  # 24 hours of 10-minute data
     df_10min = dropna(df_10min)
     df_10min = add_indicators(df_10min)
-
-    # 최근 데이터만 사용
-    df_daily_recent = df_daily.tail(60)  # 최근 60일
-    df_hourly_recent = df_hourly.tail(48)  # 최근 48시간
-    df_10min_recent = df_10min.tail(72)  # 최근 12시간의 10분 데이터
 
     # DataFrame을 딕셔너리로 변환하고 Timestamp를 문자열로 변환
     def df_to_dict(df):
@@ -121,9 +108,8 @@ def get_simplified_chart_data():
         return {k.isoformat(): v for k, v in df_dict.items()}
 
     return {
-        'daily': df_to_dict(df_daily_recent),
-        'hourly': df_to_dict(df_hourly_recent),
-        '10min': df_to_dict(df_10min_recent)
+        'daily': df_to_dict(df_daily),
+        '10min': df_to_dict(df_10min)
     }
 
 # 공포와 탐욕 지수 가져오기
@@ -525,9 +511,8 @@ def ai_trading():
                     {"role": "user", "content": f"""
 Current investment status: {json.dumps(current_status_serializable)}
 Orderbook: {json.dumps(orderbook_serializable)}
-Daily OHLCV with indicators (recent 60 days): {json.dumps(chart_data_serializable['daily'])}
-Hourly OHLCV with indicators (recent 48 hours): {json.dumps(chart_data_serializable['hourly'])}
-10-minute OHLCV with indicators (recent 12 hours): {json.dumps(chart_data_serializable['10min'])}
+Daily OHLCV with indicators (recent 30 days): {json.dumps(chart_data_serializable['daily'])}
+10-minute OHLCV with indicators (recent 24 hours): {json.dumps(chart_data_serializable['10min'])}
 Recent news headlines: {json.dumps(news_serializable)}
 Fear and Greed Index: {json.dumps(fear_greed_index_serializable)}
 Volatility data: {json.dumps(volatility_data_serializable)}
