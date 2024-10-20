@@ -19,6 +19,8 @@ import signal
 import psutil
 from scipy import optimize
 import logging.handlers
+import ta
+from ta.utils import dropna
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -96,39 +98,33 @@ def get_simplified_orderbook():
 
 # 기술 지표가 포함된 간단한 차트 데이터 가져오기
 def get_simplified_chart_data():
-    df = pyupbit.get_ohlcv("KRW-BTC", count=100, interval="day")
+    df_daily = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=180)
+    df_daily = dropna(df_daily)
+    df_daily = add_indicators(df_daily)
+    
+    df_hourly = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=168)  # 7 days of hourly data
+    df_hourly = dropna(df_hourly)
+    df_hourly = add_indicators(df_hourly)
+    
+    df_10min = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=144)  # 24 hours of 10-minute data
+    df_10min = dropna(df_10min)
+    df_10min = add_indicators(df_10min)
 
-    # RSI 계산
-    delta = df['close'].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=14, min_periods=14).mean()
-    avg_loss = loss.rolling(window=14, min_periods=14).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
+    # 최근 데이터만 사용
+    df_daily_recent = df_daily.tail(60)  # 최근 60일
+    df_hourly_recent = df_hourly.tail(48)  # 최근 48시간
+    df_10min_recent = df_10min.tail(72)  # 최근 12시간의 10분 데이터
 
-    # MACD 계산
-    exp1 = df['close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['close'].ewm(span=26, adjust=False).mean()
-    macd = exp1 - exp2
-    signal = macd.ewm(span=9, adjust=False).mean()
+    # DataFrame을 딕셔너리로 변환하고 Timestamp를 문자열로 변환
+    def df_to_dict(df):
+        df_dict = df.to_dict(orient='index')
+        return {k.isoformat(): v for k, v in df_dict.items()}
 
-    # 볼린저 밴드 계산
-    df['MA20'] = df['close'].rolling(window=20).mean()
-    df['stddev'] = df['close'].rolling(window=20).std()
-    df['upper'] = df['MA20'] + (df['stddev'] * 2)
-    df['lower'] = df['MA20'] - (df['stddev'] * 2)
-
-    latest_data = df.iloc[-1].to_dict()
-    latest_data.update({
-        'rsi': rsi.iloc[-1],
-        'macd': macd.iloc[-1],
-        'macd_signal': signal.iloc[-1],
-        'bb_upper': df['upper'].iloc[-1],
-        'bb_lower': df['lower'].iloc[-1]
-    })
-
-    return latest_data
+    return {
+        'daily': df_to_dict(df_daily_recent),
+        'hourly': df_to_dict(df_hourly_recent),
+        '10min': df_to_dict(df_10min_recent)
+    }
 
 # 공포와 탐욕 지수 가져오기
 def get_fear_and_greed_index():
@@ -166,14 +162,6 @@ def init_db():
      short_term_necessity REAL)
     ''')
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS external_transactions
-    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-     timestamp TEXT,
-     type TEXT,
-     amount REAL,
-     currency TEXT)
-    ''')
-    cursor.execute('''
     CREATE TABLE IF NOT EXISTS reflection_summary
     (id INTEGER PRIMARY KEY AUTOINCREMENT,
      summary TEXT,
@@ -203,7 +191,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         logging.error(f"거래 저장 중 오류 발생: {e}")
         conn.rollback()
 
-# 최근 거래 가져오기
+# 최근 거래 가져오기 함수 수정
 def get_recent_trades(conn, days=7, limit=None):
     cursor = conn.cursor()
     one_week_ago = (datetime.now() - timedelta(days=days)).isoformat()
@@ -213,36 +201,43 @@ def get_recent_trades(conn, days=7, limit=None):
     else:
         cursor.execute("SELECT * FROM trades WHERE timestamp >= ? ORDER BY timestamp DESC", (one_week_ago,))
 
-    return cursor.fetchall()
+    columns = [column[0] for column in cursor.description]
+    trades = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    # timestamp를 문자열로 변환
+    for trade in trades:
+        trade['timestamp'] = trade['timestamp']  # 이미 문자열 형태로 저장되어 있음
+    
+    return trades
 
-# 성과 분석
+# 성과 분석 함수 수정
 def analyze_performance(trades, current_price):
     performance = []
     total_profit = 0
     successful_trades = 0
     for trade in trades:
-        if trade[9] == 0:  # success 열
+        if trade['success'] == 0:
             performance.append({
-                'decision': trade[2],
-                'timestamp': trade[1],
+                'decision': trade['decision'],
+                'timestamp': trade['timestamp'],
                 'profit': 0,
-                'reason': trade[4],
+                'reason': trade['reason'],
                 'success': False
             })
         else:
-            if trade[2] == 'buy':
-                profit = (current_price - trade[7]) / trade[7] * 100
-            elif trade[2] == 'sell':
-                profit = (trade[8] - current_price) / current_price * 100
+            if trade['decision'] == 'buy':
+                profit = (current_price - trade['btc_krw_price']) / trade['btc_krw_price'] * 100
+            elif trade['decision'] == 'sell':
+                profit = (trade['btc_krw_price'] - current_price) / current_price * 100
             else:
                 profit = 0
             total_profit += profit
             successful_trades += 1
             performance.append({
-                'decision': trade[2],
-                'timestamp': trade[1],
+                'decision': trade['decision'],
+                'timestamp': trade['timestamp'],
                 'profit': profit,
-                'reason': trade[4],
+                'reason': trade['reason'],
                 'success': True
             })
 
@@ -372,35 +367,6 @@ def update_reflection_summary(conn, new_reflection, previous_summary):
 
     return updated_summary
 
-def record_external_transaction(conn, type, amount, currency):
-    cursor = conn.cursor()
-    timestamp = datetime.now().isoformat()
-    cursor.execute('''
-    INSERT INTO external_transactions (timestamp, type, amount, currency)
-    VALUES (?, ?, ?, ?)
-    ''', (timestamp, type, amount, currency))
-    conn.commit()
-
-def get_external_transactions(conn):
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM external_transactions ORDER BY timestamp")
-    return cursor.fetchall()
-
-def calculate_adjusted_profit(conn, current_assets):
-    external_transactions = get_external_transactions(conn)
-    net_external_flow = sum(tx[3] if tx[2] == 'deposit' else -tx[3] for tx in external_transactions)
-
-    cursor = conn.cursor()
-    cursor.execute("SELECT total_assets_krw FROM trades ORDER BY timestamp ASC LIMIT 1")
-    initial_assets_row = cursor.fetchone()
-    if initial_assets_row:
-        initial_assets = initial_assets_row[0]
-    else:
-        initial_assets = current_assets
-
-    adjusted_profit = (current_assets - initial_assets - net_external_flow) / initial_assets
-    return adjusted_profit
-
 def check_balance_for_trade(upbit, decision, percentage):
     current_status = get_current_status(upbit)
     if decision == 'buy':
@@ -415,75 +381,61 @@ def check_balance_for_trade(upbit, decision, percentage):
             return False, "Insufficient BTC balance for sell order"
     return True, ""
 
-# TWR 계산
-def calculate_twr(conn):
-    cursor = conn.cursor()
-    cursor.execute("SELECT timestamp, total_assets_krw FROM trades ORDER BY timestamp ASC")
-    data = cursor.fetchall()
+# add_indicators 함수 수정
+def add_indicators(df):
+    # 볼린저 밴드
+    indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
+    df['bb_bbm'] = indicator_bb.bollinger_mavg()
+    df['bb_bbh'] = indicator_bb.bollinger_hband()
+    df['bb_bbl'] = indicator_bb.bollinger_lband()
+    
+    # RSI (이미 있음)
+    df['rsi'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+    
+    # MACD (이미 있음)
+    macd = ta.trend.MACD(close=df['close'])
+    df['macd'] = macd.macd()
+    df['macd_signal'] = macd.macd_signal()
+    df['macd_diff'] = macd.macd_diff()
+    
+    # 이동평균선 (단기, 장기)
+    df['sma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
+    df['ema_12'] = ta.trend.EMAIndicator(close=df['close'], window=12).ema_indicator()
 
-    if len(data) < 2:
-        return 0.0
+    # Stochastic Oscillator 추가
+    stoch = ta.momentum.StochasticOscillator(
+        high=df['high'], low=df['low'], close=df['close'], window=14, smooth_window=3)
+    df['stoch_k'] = stoch.stoch()
+    df['stoch_d'] = stoch.stoch_signal()
 
-    df = pd.DataFrame(data, columns=['timestamp', 'total_assets_krw'])
-    df['return'] = df['total_assets_krw'].pct_change()
-    df['return'] = df['return'].fillna(0)
-    cumulative_return = (1 + df['return']).prod() - 1
-    return cumulative_return * 100  # 퍼센트로 반환
+    # Average True Range (ATR) 추가
+    df['atr'] = ta.volatility.AverageTrueRange(
+        high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
 
-# MWR 계산
-def xirr(cashflows, dates):
-    def npv(rate):
-        total = 0.0
-        for cf, date in zip(cashflows, dates):
-            days = (date - dates[0]).days
-            total += cf / ((1 + rate) ** (days / 365.0))
-        return total
+    # On-Balance Volume (OBV) 추가
+    df['obv'] = ta.volume.OnBalanceVolumeIndicator(
+        close=df['close'], volume=df['volume']).on_balance_volume()
 
-    try:
-        result = optimize.newton(npv, 0.1)
-        return result
-    except (RuntimeError, OverflowError, ValueError):
-        return None
+    return df
 
-def calculate_mwr(conn):
-    cursor = conn.cursor()
-    cursor.execute("SELECT timestamp, total_assets_krw FROM trades ORDER BY timestamp ASC")
-    data = cursor.fetchall()
-
-    if len(data) < 2:
-        return 0.0
-
-    df = pd.DataFrame(data, columns=['timestamp', 'total_assets_krw'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-
-    # 외부 거래 가져오기
-    external_transactions = pd.read_sql_query("SELECT * FROM external_transactions ORDER BY timestamp", conn)
-    external_transactions['timestamp'] = pd.to_datetime(external_transactions['timestamp'])
-
-    cash_flows = []
-    dates = []
-
-    # 초기 투자(음수 현금 흐름)
-    cash_flows.append(-df['total_assets_krw'].iloc[0])
-    dates.append(df['timestamp'].iloc[0])
-
-    # 외부 거래
-    for idx, row in external_transactions.iterrows():
-        amount = row['amount'] if row['type'] == 'deposit' else -row['amount']
-        cash_flows.append(amount)
-        dates.append(row['timestamp'])
-
-    # 종료 값(양수 현금 흐름)
-    cash_flows.append(df['total_assets_krw'].iloc[-1])
-    dates.append(df['timestamp'].iloc[-1])
-
-    mwr = xirr(cash_flows, dates)
-    if mwr is not None:
-        return mwr * 100  # 퍼센트로 반환
+def convert_to_serializable(obj):
+    if isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
     else:
-        return 0.0
+        return str(obj)  # 다른 모든 타입을 문자로 변환
 
-# ai_trading 함수
+def prepare_data_for_api(data):
+    return json.loads(json.dumps(data, default=convert_to_serializable))
+
+# ai_trading 함
 def ai_trading():
     logging.info("Starting ai_trading function")
 
@@ -492,7 +444,7 @@ def ai_trading():
         current_status = get_current_status(upbit)
         try:
             orderbook = get_simplified_orderbook()
-            logging.info(f"Simplified orderbook: {orderbook}")  # 로그 추가
+            logging.info(f"Simplified orderbook: {orderbook}")
         except Exception as e:
             logging.error(f"Error getting simplified orderbook: {str(e)}", exc_info=True)
             orderbook = {
@@ -556,175 +508,191 @@ def ai_trading():
     Base this score on market volatility, recent news impact, and potential short-term opportunities.
     Display the score with two decimal places (e.g., 0.75)."""
 
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": json.dumps({
-                            "current_status": current_status,
-                            "orderbook": orderbook,
-                            "chart_data": chart_data,
-                            "fear_greed_index": fear_greed_index,
-                            "volatility_data": volatility_data,
-                            "news": news
-                        }, ensure_ascii=False)}
-                    ],
-                    functions=[{
-                        "name": "make_trading_decision",
-                        "description": "Make a trading decision based on the given market data",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "decision": {
-                                    "type": "string",
-                                    "enum": ["buy", "sell", "hold"],
-                                    "description": "The trading decision"
-                                },
-                                "percentage": {
-                                    "type": "number",
-                                    "description": "The percentage of balance to trade"
-                                },
-                                "reason": {
-                                    "type": "string",
-                                    "description": "The reason for the trading decision"
-                                },
-                                "short_term_necessity": {
-                                    "type": "number",
-                                    "minimum": 0,
-                                    "maximum": 1,
-                                    "description": "The necessity for short-term trading, from 0 to 1"
-                                }
+            # 모든 데이터를 JSON 직렬화 가능한 형태로 변환
+            current_status_serializable = prepare_data_for_api(current_status)
+            orderbook_serializable = prepare_data_for_api(orderbook)
+            chart_data_serializable = chart_data  # 이미 직렬화 가능한 형태로 변환되어 있음
+            fear_greed_index_serializable = prepare_data_for_api(fear_greed_index)
+            volatility_data_serializable = prepare_data_for_api(volatility_data)
+            news_serializable = prepare_data_for_api(news)
+            performance_serializable = prepare_data_for_api(performance)
+            recent_trades_serializable = prepare_data_for_api(recent_trades)
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": f"""
+Current investment status: {json.dumps(current_status_serializable)}
+Orderbook: {json.dumps(orderbook_serializable)}
+Daily OHLCV with indicators (recent 60 days): {json.dumps(chart_data_serializable['daily'])}
+Hourly OHLCV with indicators (recent 48 hours): {json.dumps(chart_data_serializable['hourly'])}
+10-minute OHLCV with indicators (recent 12 hours): {json.dumps(chart_data_serializable['10min'])}
+Recent news headlines: {json.dumps(news_serializable)}
+Fear and Greed Index: {json.dumps(fear_greed_index_serializable)}
+Volatility data: {json.dumps(volatility_data_serializable)}
+Strategies: {strategies}
+Recent trades: {json.dumps(recent_trades_serializable)}
+Performance: {json.dumps(performance_serializable)}
+Average profit: {avg_profit}
+Reflection: {reflection}
+
+Based on this information, what trading decision should be made? Please provide your decision (buy, sell, or hold), the percentage (0-100), and a detailed reason for your decision. Consider the short-term trends visible in the 10-minute data for more immediate market movements.
+                    """}
+                ],
+                functions=[{
+                    "name": "make_trading_decision",
+                    "description": "Make a trading decision based on the given market data",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "decision": {
+                                "type": "string",
+                                "enum": ["buy", "sell", "hold"],
+                                "description": "The trading decision"
                             },
-                            "required": ["decision", "percentage", "reason", "short_term_necessity"]
-                        }
-                    }],
-                    function_call={"name": "make_trading_decision"}
-                )
+                            "percentage": {
+                                "type": "number",
+                                "description": "The percentage of balance to trade"
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "The reason for the trading decision"
+                            },
+                            "short_term_necessity": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                                "description": "The necessity for short-term trading, from 0 to 1"
+                            }
+                        },
+                        "required": ["decision", "percentage", "reason", "short_term_necessity"]
+                    }
+                }],
+                function_call={"name": "make_trading_decision"}
+            )
 
-                function_call = response.choices[0].message.function_call
-                result = json.loads(function_call.arguments)
-
-            except Exception as e:
-                logging.error(f"OpenAI API 오류: {str(e)}")
-                raise
-
-            assistant_message = json.dumps(result)
-            logging.info(f"AI response: {assistant_message}")
-
-            decision = result['decision']
-            percentage = result['percentage']
-            reason = result['reason']
-            short_term_necessity = result.get('short_term_necessity', 0.5)
-            logging.info(f"Short-term trading necessity score: {short_term_necessity}")
-
-            if decision == 'sell' and current_btc_balance == 0:
-                decision = 'hold'
-                reason = "Changed to hold because current BTC balance is 0"
-                logging.info("Decision changed to hold due to zero BTC balance")
-
-            if decision != 'hold':
-                balance_ok, message = check_balance_for_trade(upbit, decision, percentage)
-                if not balance_ok:
-                    logging.warning(message)
-                    save_trade(conn, decision, percentage, reason,
-                               current_status['btc_balance'],
-                               current_status['krw_balance'],
-                               upbit.get_avg_buy_price("KRW-BTC") or 0,
-                               current_status['btc_price'],
-                               success=False,
-                               reflection=message,
-                               cumulative_reflection=updated_summary,
-                               short_term_necessity=short_term_necessity)
-                else:
-                    if decision == 'buy':
-                        trade_amount = current_status['krw_balance'] * (percentage / 100)
-                    else:  # sell
-                        trade_amount = current_status['btc_balance'] * (percentage / 100)
-                        trade_amount = round(trade_amount, 8)  # Round to 8 decimal places for BTC
-
-                    try:
-                        if decision == 'buy':
-                            order = upbit.buy_market_order("KRW-BTC", trade_amount)
-                        else:  # sell
-                            order = upbit.sell_market_order("KRW-BTC", trade_amount)
-
-                        if 'error' in order:
-                            raise Exception(f"Order failed: {order['error']['message']}")
-
-                        updated_status = get_current_status(upbit)
-
-                        save_trade(conn,
-                                   decision,
-                                   percentage,
-                                   reason,
-                                   updated_status['btc_balance'],
-                                   updated_status['krw_balance'],
-                                   upbit.get_avg_buy_price("KRW-BTC"),
-                                   updated_status['btc_price'],
-                                   success=True,
-                                   reflection=reflection,
-                                   cumulative_reflection=updated_summary,
-                                   short_term_necessity=short_term_necessity)
-                        logging.info(f"Trade saved: {decision}, {percentage}%, {reason}")
-
-                        logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
-                    except Exception as trade_error:
-                        logging.error(f"Trade execution failed: {str(trade_error)}")
-                        save_trade(conn,
-                                   decision,
-                                   percentage,
-                                   reason,
-                                   current_status['btc_balance'],
-                                   current_status['krw_balance'],
-                                   upbit.get_avg_buy_price("KRW-BTC"),
-                                   current_status['btc_price'],
-                                   success=False,
-                                   reflection=str(trade_error),
-                                   cumulative_reflection=updated_summary,
-                                   short_term_necessity=short_term_necessity)
-            else:
-                logging.info(f"Decision: Hold. Reason: {reason}")
-                save_trade(conn,
-                           'hold',
-                           0,
-                           reason,
-                           current_status['btc_balance'],
-                           current_status['krw_balance'],
-                           upbit.get_avg_buy_price("KRW-BTC"),
-                           current_status['btc_price'],
-                           success=True,
-                           reflection=reflection,
-                           cumulative_reflection=updated_summary,
-                           short_term_necessity=short_term_necessity)
-                logging.info(f"Hold decision saved: {reason}")
-
-            return {'short_term_necessity': short_term_necessity}
+            function_call = response.choices[0].message.function_call
+            result = json.loads(function_call.arguments)
 
         except Exception as e:
-            logging.error(f"Error in ai_trading: {str(e)}")
+            logging.error(f"OpenAI API 오류: {str(e)}")
+            raise
+
+        assistant_message = json.dumps(result)
+        logging.info(f"AI response: {assistant_message}")
+
+        decision = result['decision']
+        percentage = result['percentage']
+        reason = result['reason']
+        short_term_necessity = result.get('short_term_necessity', 0.5)
+        if short_term_necessity is None:
+            short_term_necessity = 0.5
+        logging.info(f"Short-term trading necessity score: {short_term_necessity}")
+
+        if decision == 'sell' and current_btc_balance == 0:
+            decision = 'hold'
+            reason = "Changed to hold because current BTC balance is 0"
+            logging.info("Decision changed to hold due to zero BTC balance")
+
+        if decision != 'hold':
+            balance_ok, message = check_balance_for_trade(upbit, decision, percentage)
+            if not balance_ok:
+                logging.warning(message)
+                save_trade(conn, decision, percentage, reason,
+                           current_status['btc_balance'],
+                           current_status['krw_balance'],
+                           upbit.get_avg_buy_price("KRW-BTC") or 0,
+                           current_status['btc_price'],
+                           success=False,
+                           reflection=message,
+                           cumulative_reflection=updated_summary,
+                           short_term_necessity=short_term_necessity)
+            else:
+                if decision == 'buy':
+                    trade_amount = current_status['krw_balance'] * (percentage / 100)
+                else:  # sell
+                    trade_amount = current_status['btc_balance'] * (percentage / 100)
+                    trade_amount = round(trade_amount, 8)  # Round to 8 decimal places for BTC
+
+                try:
+                    if decision == 'buy':
+                        order = upbit.buy_market_order("KRW-BTC", trade_amount)
+                    else:  # sell
+                        order = upbit.sell_market_order("KRW-BTC", trade_amount)
+
+                    if 'error' in order:
+                        raise Exception(f"Order failed: {order['error']['message']}")
+
+                    updated_status = get_current_status(upbit)
+
+                    save_trade(conn,
+                               decision,
+                               percentage,
+                               reason,
+                               updated_status['btc_balance'],
+                               updated_status['krw_balance'],
+                               upbit.get_avg_buy_price("KRW-BTC"),
+                               updated_status['btc_price'],
+                               success=True,
+                               reflection=reflection,
+                               cumulative_reflection=updated_summary,
+                               short_term_necessity=short_term_necessity)
+                    logging.info(f"Trade saved: {decision}, {percentage}%, {reason}")
+
+                    logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
+                except Exception as trade_error:
+                    logging.error(f"Trade execution failed: {str(trade_error)}")
+                    save_trade(conn,
+                               decision,
+                               percentage,
+                               reason,
+                               current_status['btc_balance'],
+                               current_status['krw_balance'],
+                               upbit.get_avg_buy_price("KRW-BTC"),
+                               current_status['btc_price'],
+                               success=False,
+                               reflection=str(trade_error),
+                               cumulative_reflection=updated_summary,
+                               short_term_necessity=short_term_necessity)
+        else:
+            logging.info(f"Decision: Hold. Reason: {reason}")
             save_trade(conn,
-                       'error',
+                       'hold',
                        0,
-                       str(e),
+                       reason,
                        current_status['btc_balance'],
                        current_status['krw_balance'],
-                       upbit.get_avg_buy_price("KRW-BTC") or 0,
+                       upbit.get_avg_buy_price("KRW-BTC"),
                        current_status['btc_price'],
-                       success=False,
-                       reflection="Error in ai_trading function",
-                       cumulative_reflection="Error occurred during trading",
-                       short_term_necessity=None)
-            logging.info("Error trade saved")
-            return {'short_term_necessity': None}
-        finally:
-            if 'conn' in locals():
-                conn.close()
-            logging.info("Finished ai_trading function")
+                       success=True,
+                       reflection=reflection,
+                       cumulative_reflection=updated_summary,
+                       short_term_necessity=short_term_necessity)
+            logging.info(f"Hold decision saved: {reason}")
+
+        return {'short_term_necessity': short_term_necessity}
 
     except Exception as e:
-        logging.error(f"ai_trading 함수에서 오류 발생: {str(e)}", exc_info=True)
-        raise
+        logging.error(f"Error in ai_trading: {str(e)}")
+        save_trade(conn,
+                   'error',
+                   0,
+                   str(e),
+                   current_status['btc_balance'],
+                   current_status['krw_balance'],
+                   upbit.get_avg_buy_price("KRW-BTC") or 0,
+                   current_status['btc_price'],
+                   success=False,
+                   reflection="Error in ai_trading function",
+                   cumulative_reflection="Error occurred during trading",
+                   short_term_necessity=None)
+        logging.info("Error trade saved")
+        return {'short_term_necessity': None}
+    finally:
+        if 'conn' in locals():
+            conn.close()
+        logging.info("Finished ai_trading function")
 
 # Check market volatility
 def check_market_volatility():
@@ -743,6 +711,10 @@ def calculate_trading_interval(volatility, volume, short_term_necessity):
     # Interval range in seconds
     min_interval = 600    # 10 minutes
     max_interval = 28800  # 8 hours
+
+    # Ensure short_term_necessity is not None
+    if short_term_necessity is None:
+        short_term_necessity = 0.5
 
     # Normalize volatility and volume to a 0-1 scale
     normalized_volatility = min(volatility / 0.01, 1)
