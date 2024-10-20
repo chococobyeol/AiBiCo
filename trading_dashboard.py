@@ -323,7 +323,9 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("<h3>BTC Average Buy Price Change</h3>", unsafe_allow_html=True)
-        fig = go.Figure(data=[go.Scatter(x=df['timestamp'], y=df['btc_avg_buy_price'], mode='lines')])
+        # 0이 아닌 값만 필터링
+        non_zero_df = df[df['btc_avg_buy_price'] > 0]
+        fig = go.Figure(data=[go.Scatter(x=non_zero_df['timestamp'], y=non_zero_df['btc_avg_buy_price'], mode='lines')])
         fig.update_layout(title='BTC Average Buy Price Over Time', xaxis_title='Timestamp', yaxis_title='BTC Average Buy Price')
         st.plotly_chart(fig, use_container_width=True)
 
