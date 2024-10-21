@@ -1,10 +1,7 @@
-4. Low-Leverage, High-Win Rate Strategy
-
-• Compounding with Small Gains: Wonyotti believed that success came from consistently making small gains rather than aiming for big, one-time wins. By aiming for small daily gains (around 1-2% per day), they utilized the power of compounding to grow their capital.
-• Moderate Leverage: While Wonyotti did use leverage, they did so conservatively. High leverage carries high risks, so they preferred lower leverage to ensure stable, long-term growth.
-
-5. Capital Management Strategy
-
-• Controlled Investment: Wonyotti advised investing only 20-30% of available capital at any given time. Early on, they used higher leverage (up to 10x) when the capital was small. As their capital grew, they reduced leverage to manage risk.
-• Disciplined Buying: They discouraged over-leveraging or "averaging down" on losing positions unless it was planned and well-thought-out. Beginners, in particular, were advised against averaging down on losses.
-
+Low-Leverage, High-Win Rate Strategy
+	•	Focused on compounding small daily gains (1-2%) for long-term growth.
+	•	Used moderate leverage to minimize risk and ensure steady progress.
+Capital Management Strategy
+	•	Invested only 20-30% of available capital at a time.
+	•	Started with higher leverage (up to 10x) with small capital, reducing leverage as capital grew.
+	•	Discouraged over-leveraging or averaging down on losing positions unless carefully planned.

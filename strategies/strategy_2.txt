@@ -1,10 +1,8 @@
-2. Flexible Response to Market Sentiment
-
-• Adapting to Market Sentiment: Wonyotti recognized the importance of the market's overall sentiment. For example, even when negative news was released, if the market sentiment was strong, the price would likely continue to rise. Conversely, in a bearish environment, even positive news may not trigger significant upward movement.
-• Quick Adjustments: Wonyotti was highly flexible, reacting to news and market changes quickly by adjusting their positions in line with how the market was behaving in the moment.
-
-3. Adaptive Stop-Loss Strategy
-
-• Situational Stop-Losses: Instead of using mechanical, fixed stop-losses, Wonyotti applied stop-losses based on the situation. If the market moved contrary to their pre-planned scenario or their mental state was affected, they would cut their losses.
-• Strict Risk Management: Wonyotti maintained a strict stop-loss line and adhered to it without letting emotions influence decisions. This discipline was a key part of their risk management strategy.
-
+Flexible Response to Market Sentiment
+	•	Adapted to market sentiment, recognizing that strong sentiment could override negative news.
+	•	In a bearish market, positive news may not lead to price increases.
+	•	Quickly adjusted positions based on real-time market behavior.
+Adaptive Stop-Loss Strategy
+	•	Used situational stop-losses instead of fixed rules.
+	•	Cut losses when market deviated from plan or mental state was affected.
+	•	Maintained strict risk management, avoiding emotional decisions.

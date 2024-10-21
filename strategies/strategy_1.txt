@@ -1,7 +1,5 @@
-1. Chart-Based Trading Strategy
-
-• Focus on Technical Analysis: The investor, referred to as "Wonyotti," primarily used chart analysis to guide their trades. Rather than relying on market news or external information (such as liquidation data or funding rates), they focused entirely on the market trends visible in the charts.
-• Trend Identification: Wonyotti emphasized recognizing the larger market trends—whether the market was in a bullish or bearish phase—and used that understanding to take positions.
-• Key Chart Tools: The strategy involved paying close attention to support and resistance levels. These were critical in determining the right moments to buy or sell.
-• Momentum and Adjusting Positions: Wonyotti continually monitored the market momentum through charts, making adjustments to their positions based on whether the trend was expected to continue or reverse.
-
+Chart-Based Trading Strategy
+	•	Relied solely on technical analysis, ignoring external factors like news or liquidation data.
+	•	Focused on identifying major market trends (bullish or bearish) to inform trading decisions.
+	•	Used support and resistance levels to determine buy and sell points.
+	•	Monitored market momentum and adjusted positions based on expected trend continuation or reversal.
