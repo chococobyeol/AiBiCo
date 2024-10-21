@@ -39,6 +39,10 @@ news_cache = {'mediastack': None, 'cryptocompare': None, 'last_update': None}
 # 최소 거래 간격(초 단위)
 MIN_TRADE_INTERVAL = 600  # 10분
 
+# 상수 정의
+MIN_TRADE_AMOUNT = 5000  # 최소 거래 금액 (원)
+TRADE_FEE = 0.0005  # 거래 수수료 (0.05%)
+
 # 전략 파일 읽기
 def read_strategies():
     strategies = ""
@@ -51,15 +55,22 @@ def read_strategies():
 
 # 현재 계좌 상태 가져오기
 def get_current_status(upbit):
-    krw_balance = upbit.get_balance("KRW")
-    btc_balance = upbit.get_balance("KRW-BTC")
-    btc_price = pyupbit.get_current_price("KRW-BTC")
+    try:
+        krw_balance = upbit.get_balance("KRW")
+        btc_balance = upbit.get_balance("KRW-BTC")
+        btc_price = pyupbit.get_current_price("KRW-BTC")
 
-    return {
-        "krw_balance": float(krw_balance),
-        "btc_balance": float(btc_balance),
-        "btc_price": float(btc_price)
-    }
+        if krw_balance is None or btc_balance is None or btc_price is None:
+            raise ValueError("Failed to retrieve balance or price information")
+
+        return {
+            "krw_balance": float(krw_balance),
+            "btc_balance": float(btc_balance),
+            "btc_price": float(btc_price)
+        }
+    except Exception as e:
+        logging.error(f"Error in get_current_status: {str(e)}")
+        return None
 
 # 간단한 주문서 가져오기
 def get_simplified_orderbook():
@@ -155,7 +166,7 @@ def init_db():
     conn.commit()
     return conn
 
-# 거래 데이터 저장
+#  데이터 저장
 def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success=True, reflection=None, cumulative_reflection=None, short_term_necessity=None):
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
@@ -271,7 +282,7 @@ def generate_reflection(performance, strategies, trades, avg_profit, previous_re
     ]
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=messages,
         max_tokens=500
     )
@@ -361,7 +372,7 @@ def update_reflection_summary(conn, new_reflection, previous_summary):
     ]
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=messages,
         max_tokens=300
     )
@@ -376,16 +387,19 @@ def update_reflection_summary(conn, new_reflection, previous_summary):
 
 def check_balance_for_trade(upbit, decision, percentage):
     current_status = get_current_status(upbit)
+    if current_status is None:
+        return False, "Failed to get current status"
+
     if decision == 'buy':
         available_krw = current_status['krw_balance']
         trade_amount = available_krw * (percentage / 100)
-        if trade_amount < 5000:  # 최소 주문 금액
-            return False, "Insufficient KRW balance for buy order"
+        if trade_amount < MIN_TRADE_AMOUNT:
+            return False, f"Insufficient KRW balance for buy order. Minimum required: {MIN_TRADE_AMOUNT} KRW"
     elif decision == 'sell':
         available_btc = current_status['btc_balance']
-        trade_amount = available_btc * (percentage / 100)
-        if trade_amount * current_status['btc_price'] < 5000:  # 최소 주문 금액
-            return False, "Insufficient BTC balance for sell order"
+        trade_amount = available_btc * (percentage / 100) * current_status['btc_price']
+        if trade_amount < MIN_TRADE_AMOUNT:
+            return False, f"Insufficient BTC balance for sell order. Minimum required: {MIN_TRADE_AMOUNT / current_status['btc_price']} BTC"
     return True, ""
 
 # add_indicators 함수 수정
@@ -515,10 +529,10 @@ def ai_trading():
     Base this score on market volatility, recent news impact, and potential short-term opportunities.
     Display the score with two decimal places (e.g., 0.75)."""
 
-            # 모든 데이터를 JSON 직렬화 가능한 형태로 변환
+            # 모든 데이터를 JSON 직렬화 가한 형태로 변환
             current_status_serializable = prepare_data_for_api(current_status)
             orderbook_serializable = prepare_data_for_api(orderbook)
-            chart_data_serializable = chart_data  # 이미 직렬화 가능한 형태로 변환되어 있음
+            chart_data_serializable = chart_data  # 이미 직렬화 능한 형태로 변환되어 있음
             fear_greed_index_serializable = prepare_data_for_api(fear_greed_index)
             volatility_data_serializable = prepare_data_for_api(volatility_data)
             news_serializable = prepare_data_for_api(news)
@@ -531,7 +545,7 @@ def ai_trading():
             avg_profit_serializable = float(avg_profit)
 
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": f"""
@@ -619,17 +633,24 @@ Based on this information, what trading decision should be made? Please provide 
                            cumulative_reflection=updated_summary,
                            short_term_necessity=short_term_necessity)
             else:
-                if decision == 'buy':
-                    trade_amount = current_status['krw_balance'] * (percentage / 100)
-                else:  # sell
-                    trade_amount = current_status['btc_balance'] * (percentage / 100)
-                    trade_amount = round(trade_amount, 8)  # Round to 8 decimal places for BTC
-
                 try:
                     if decision == 'buy':
-                        order = upbit.buy_market_order("KRW-BTC", trade_amount)
+                        krw_balance = upbit.get_balance("KRW")
+                        trade_amount = krw_balance * (percentage / 100)
+                        trade_amount = min(trade_amount, krw_balance)  # 사용 가능한 잔액으로 조정
+                        trade_amount_with_fee = trade_amount / (1 + TRADE_FEE)  # 수수료를 고려한 실제 거래 금액
+                        if trade_amount_with_fee >= MIN_TRADE_AMOUNT:
+                            order = upbit.buy_market_order("KRW-BTC", trade_amount_with_fee)
+                        else:
+                            raise Exception(f"Trade amount too small: {trade_amount_with_fee} KRW")
                     else:  # sell
-                        order = upbit.sell_market_order("KRW-BTC", trade_amount)
+                        btc_balance = upbit.get_balance("KRW-BTC")
+                        trade_amount = btc_balance * (percentage / 100)
+                        trade_amount_krw = trade_amount * current_status['btc_price']
+                        if trade_amount_krw >= MIN_TRADE_AMOUNT:
+                            order = upbit.sell_market_order("KRW-BTC", trade_amount)
+                        else:
+                            raise Exception(f"Trade amount too small: {trade_amount_krw} KRW")
 
                     if 'error' in order:
                         raise Exception(f"Order failed: {order['error']['message']}")
@@ -654,15 +675,15 @@ Based on this information, what trading decision should be made? Please provide 
                 except Exception as trade_error:
                     logging.error(f"Trade execution failed: {str(trade_error)}")
                     save_trade(conn,
-                               decision,
-                               percentage,
-                               reason,
+                               'error',
+                               0,
+                               str(trade_error),
                                current_status['btc_balance'],
                                current_status['krw_balance'],
-                               upbit.get_avg_buy_price("KRW-BTC"),
+                               upbit.get_avg_buy_price("KRW-BTC") or 0,
                                current_status['btc_price'],
                                success=False,
-                               reflection=str(trade_error),
+                               reflection="Trade execution failed",
                                cumulative_reflection=updated_summary,
                                short_term_necessity=short_term_necessity)
         else:
