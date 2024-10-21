@@ -160,7 +160,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
 
-    # 총 자산(KRW) 계산
+    # 총 자산(KRW) 
     total_assets_krw = krw_balance + (btc_balance * btc_krw_price)
 
     try:
@@ -171,7 +171,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price,
               int(success), reflection, total_assets_krw, cumulative_reflection, short_term_necessity))
         conn.commit()
-        logging.info(f"거래가 성��적으로 저장되었습니다: {decision}, {success}")
+        logging.info(f"거래가 성공적으로 저장되었습니다: {decision}, {success}")
     except sqlite3.Error as e:
         logging.error(f"거래 저장 중 오류 발생: {e}")
         conn.rollback()
@@ -189,46 +189,67 @@ def get_recent_trades(conn, days=7, limit=5):  # limit를 5로 변경
     columns = [column[0] for column in cursor.description]
     trades = [dict(zip(columns, row)) for row in cursor.fetchall()]
     
-    # timestamp를 문자열로 변환
-    for trade in trades:
-        trade['timestamp'] = trade['timestamp']  # 이미 문자열 형태로 저장되어 있음
-    
     return trades
 
 # 성과 분석 함수 수정
-def analyze_performance(trades, current_price, upbit):
+def analyze_performance(trades, current_price):
     performance = []
+    total_profit_percentage = 0
+    recent_trades_count = 0  # 변수명 변경
     initial_assets = None
-    previous_assets = None
+    
+    for i, trade in enumerate(trades):
+        if i == 0:
+            initial_assets = trade['total_assets_krw']
+        
+        current_assets = trade['total_assets_krw']
+        
+        if trade['success'] == 0:
+            performance.append({
+                'decision': trade['decision'],
+                'timestamp': trade['timestamp'],
+                'profit_percentage': 0,
+                'reason': trade['reason'],
+                'success': False
+            })
+        else:
+            if i > 0:
+                previous_assets = trades[i-1]['total_assets_krw']
+                profit_percentage = ((current_assets - previous_assets) / previous_assets) * 100
+                total_profit_percentage += profit_percentage
+                recent_trades_count += 1
+                
+                performance.append({
+                    'decision': trade['decision'],
+                    'timestamp': trade['timestamp'],
+                    'profit_percentage': profit_percentage,
+                    'reason': trade['reason'],
+                    'success': True
+                })
 
-    for trade in trades:
-        current_assets = upbit.get_amount('ALL')
-        
-        if initial_assets is None:
-            initial_assets = current_assets
-            previous_assets = current_assets
-        
-        profit_percentage = ((current_assets - previous_assets) / previous_assets) * 100 if previous_assets > 0 else 0
-        total_profit_percentage = ((current_assets - initial_assets) / initial_assets) * 100 if initial_assets > 0 else 0
-        
+    # 마지막 거래 이후의 현재 총 자산 계산
+    if trades:
+        last_trade = trades[0]  # 가장 최근 거래
+        current_assets = (last_trade['krw_balance'] + 
+                          last_trade['btc_balance'] * current_price)
+        final_profit_percentage = ((current_assets - initial_assets) / initial_assets) * 100
+        total_profit_percentage += final_profit_percentage
+        recent_trades_count += 1
+
         performance.append({
-            'decision': trade['decision'],
-            'timestamp': trade['timestamp'],
-            'profit_percentage': profit_percentage,
-            'total_profit_percentage': total_profit_percentage,
-            'reason': trade['reason'],
-            'success': trade['success'] == 1,
-            'total_assets': current_assets
+            'decision': 'current',
+            'timestamp': datetime.now().isoformat(),
+            'profit_percentage': final_profit_percentage,
+            'reason': 'Current market status',
+            'success': True
         })
-        
-        previous_assets = current_assets
 
-    final_assets = upbit.get_amount('ALL')
-    final_total_profit_percentage = ((final_assets - initial_assets) / initial_assets) * 100 if initial_assets > 0 else 0
-
-    avg_profit_percentage = sum(p['profit_percentage'] for p in performance) / len(performance) if performance else 0
-
-    return performance, avg_profit_percentage, final_total_profit_percentage, final_assets
+    avg_profit_percentage = total_profit_percentage / recent_trades_count if recent_trades_count > 0 else 0
+    
+    # avg_profit_percentage의 타입 로깅
+    logging.info(f"avg_profit_percentage type: {type(avg_profit_percentage)}")
+    
+    return performance, avg_profit_percentage
 
 # 반성 생성
 def generate_reflection(performance, strategies, trades, avg_profit, previous_reflections):
@@ -416,7 +437,7 @@ def convert_to_serializable(obj):
     elif isinstance(obj, datetime):
         return obj.isoformat()
     else:
-        return str(obj)  # 다른 모든 타입을 자로 변환
+        return str(obj)  # 다른 모든 타입을 문자로 변환
 
 def prepare_data_for_api(data):
     return json.loads(json.dumps(data, default=convert_to_serializable))
@@ -467,7 +488,7 @@ def ai_trading():
 
             recent_trades = get_recent_trades(conn, limit=5)
             current_price = pyupbit.get_current_price("KRW-BTC")
-            performance, avg_profit, total_profit_percentage, final_assets = analyze_performance(recent_trades, current_price, upbit)
+            performance, avg_profit = analyze_performance(recent_trades, current_price)
             strategies = read_strategies()
             previous_summary = get_reflection_summary(conn)
 
@@ -501,8 +522,13 @@ def ai_trading():
             fear_greed_index_serializable = prepare_data_for_api(fear_greed_index)
             volatility_data_serializable = prepare_data_for_api(volatility_data)
             news_serializable = prepare_data_for_api(news)
-            performance_serializable = prepare_data_for_api(performance)
             recent_trades_serializable = prepare_data_for_api(recent_trades)
+
+            # avg_profit의 타입 로깅
+            logging.info(f"avg_profit type: {type(avg_profit)}")
+
+            # JSON 직렬화 시 float로 변환
+            avg_profit_serializable = float(avg_profit)
 
             response = client.chat.completions.create(
                 model="gpt-4o",
@@ -518,7 +544,7 @@ Fear and Greed Index: {json.dumps(fear_greed_index_serializable)}
 Volatility data: {json.dumps(volatility_data_serializable)}
 Strategies: {strategies}
 Recent trades (last 5): {json.dumps(recent_trades_serializable)}
-Average profit: {avg_profit}
+Average profit: {avg_profit_serializable}
 Reflection: {reflection}
 
 Based on this information, what trading decision should be made? Please provide your decision (buy, sell, or hold), the percentage (0-100), and a detailed reason for your decision. Consider the short-term trends visible in the 10-minute data for more immediate market movements.
