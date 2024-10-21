@@ -21,6 +21,7 @@ from scipy import optimize
 import logging.handlers
 import ta
 from ta.utils import dropna
+from check_volatility import get_current_volatility, get_10min_volatility, check_trading_volume, get_10min_volume
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -527,7 +528,8 @@ def ai_trading():
     0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
     1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
     Base this score on market volatility, recent news impact, and potential short-term opportunities.
-    Display the score with two decimal places (e.g., 0.75)."""
+    Use a precise two-decimal score (e.g., 0.23, 0.84, 0.51) to accurately reflect the current market conditions.
+    Avoid using rounded values like 0.10, 0.25, 0.50, etc. Instead, provide a more nuanced assessment."""
 
             # 모든 데이터를 JSON 직렬화 가한 형태로 변환
             current_status_serializable = prepare_data_for_api(current_status)
@@ -672,6 +674,14 @@ Based on this information, what trading decision should be made? Please provide 
                     logging.info(f"Trade saved: {decision}, {percentage}%, {reason}")
 
                     logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
+
+                    # 거래 완료 후 시간 정보 로깅 추가
+                    current_time = datetime.now()
+                    interval = calculate_trading_interval(short_term_necessity)
+                    next_trade_time = current_time + timedelta(seconds=interval)
+                    logging.info(f"Trade completed at: {current_time}")
+                    logging.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+
                 except Exception as trade_error:
                     logging.error(f"Trade execution failed: {str(trade_error)}")
                     save_trade(conn,
@@ -701,6 +711,13 @@ Based on this information, what trading decision should be made? Please provide 
                        cumulative_reflection=updated_summary,
                        short_term_necessity=short_term_necessity)
             logging.info(f"Hold decision saved: {reason}")
+
+            # 홀드 결정 후 시간 정보 로깅 추가
+            current_time = datetime.now()
+            interval = calculate_trading_interval(short_term_necessity)
+            next_trade_time = current_time + timedelta(seconds=interval)
+            logging.info(f"Hold decision made at: {current_time}")
+            logging.info(f"Next trade check scheduled in {interval/60:.2f} minutes at {next_trade_time}")
 
         return {'short_term_necessity': short_term_necessity}
 
@@ -738,37 +755,47 @@ def check_trading_volume():
     return avg_volume
 
 # Updated calculate_trading_interval function
-def calculate_trading_interval(volatility, volume, short_term_necessity):
+def calculate_trading_interval(short_term_necessity):
     # Interval range in seconds
     min_interval = 600    # 10 minutes
     max_interval = 28800  # 8 hours
 
-    # Ensure short_term_necessity is not None
     if short_term_necessity is None:
-        short_term_necessity = 0.5
+        return min_interval  # 10분으로 설정
 
-    # Normalize volatility and volume to a 0-1 scale
-    normalized_volatility = min(volatility / 0.01, 1)
-    normalized_volume = min(volume / 150, 1)
+    # short_term_necessity를 사용하여 선형적으로 간격 조정
+    interval = max_interval - (short_term_necessity * (max_interval - min_interval))
 
-    # Assign weights to factors
-    combined_factor = (0.7 * short_term_necessity) + (0.15 * normalized_volatility) + (0.15 * normalized_volume)
-
-    # Linearly adjust the interval based on the combined_factor
-    interval = max_interval - (combined_factor * (max_interval - min_interval))
-
-    # Ensure the interval is between min_interval and max_interval
+    # 간격이 min_interval과 max_interval 사이에 있도록 보장
     interval = max(min(interval, max_interval), min_interval)
 
-    return interval
+    return int(interval)  # 정수로 반환
 
 def check_market_conditions():
-    volatility = check_market_volatility()
-    volume = check_trading_volume()
+    current_volatility, avg_volatility, short_term_volatility, autotrade_volatility = get_current_volatility()
+    volume_data = check_trading_volume()
+    ten_min_volatility = get_10min_volatility()
+    ten_min_volume = get_10min_volume()
+    
+    if current_volatility is None or volume_data is None or ten_min_volatility is None or ten_min_volume is None:
+        logging.error("Failed to get volatility or volume data")
+        return False
 
-    if volatility > 0.01 or volume > 150:
-        return True
-    return False
+    avg_10min_volume_24h = volume_data['avg_volume_24h'] / 144
+    avg_10min_volume_14d = volume_data['avg_volume_14d'] / 2016
+
+    # 변동성 조건 확인
+    volatility_condition_1 = ten_min_volatility > short_term_volatility * 1.5
+    volatility_condition_2 = ten_min_volatility > current_volatility * 3
+
+    # 거래량 조건 확인
+    volume_condition_1 = ten_min_volume > avg_10min_volume_24h * 1.5
+    volume_condition_2 = ten_min_volume > avg_10min_volume_14d * 3
+
+    # 종합 조건 확인
+    market_condition = (volatility_condition_1 or volatility_condition_2) or (volume_condition_1 or volume_condition_2)
+
+    return market_condition
 
 def save_next_trade_time(next_trade_time):
     with open('next_trade_time.json', 'w') as f:
@@ -881,7 +908,7 @@ if __name__ == "__main__":
             volatility = check_market_volatility()
             volume = check_trading_volume()
 
-            interval = calculate_trading_interval(volatility, volume, short_term_necessity)
+            interval = calculate_trading_interval(short_term_necessity)
             next_trade_time = last_trade_time + timedelta(seconds=interval)
             save_next_trade_time(next_trade_time)
             save_last_trade_time(last_trade_time)
@@ -911,7 +938,7 @@ if __name__ == "__main__":
                     volatility = check_market_volatility()
                     volume = check_trading_volume()
 
-                    interval = calculate_trading_interval(volatility, volume, short_term_necessity)
+                    interval = calculate_trading_interval(short_term_necessity)
                     next_trade_time = current_time + timedelta(seconds=interval)
                     save_next_trade_time(next_trade_time)
                     save_last_trade_time(last_trade_time)
@@ -927,7 +954,7 @@ if __name__ == "__main__":
                         volatility = check_market_volatility()
                         volume = check_trading_volume()
 
-                        interval = calculate_trading_interval(volatility, volume, short_term_necessity)
+                        interval = calculate_trading_interval(short_term_necessity)
                         next_trade_time = current_time + timedelta(seconds=interval)
                         save_next_trade_time(next_trade_time)
                         save_last_trade_time(last_trade_time)
