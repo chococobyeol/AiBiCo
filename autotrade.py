@@ -21,9 +21,13 @@ from scipy import optimize
 import logging.handlers
 import ta
 from ta.utils import dropna
-from check_volatility import get_current_volatility, get_10min_volatility, check_trading_volume, get_10min_volume
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# autotrade.py 전용 로거 설정
+autotrade_logger = logging.getLogger('autotrade')
+autotrade_logger.setLevel(logging.INFO)
+file_handler = logging.FileHandler('autotrade.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+autotrade_logger.addHandler(file_handler)
 
 load_dotenv()
 
@@ -70,14 +74,14 @@ def get_current_status(upbit):
             "btc_price": float(btc_price)
         }
     except Exception as e:
-        logging.error(f"Error in get_current_status: {str(e)}")
+        autotrade_logger.error(f"Error in get_current_status: {str(e)}")
         return None
 
 # 간단한 주문서 가져오기
 def get_simplified_orderbook():
     try:
         orderbook = pyupbit.get_orderbook("KRW-BTC")
-        logging.info(f"Received orderbook: {orderbook}")
+        autotrade_logger.info(f"Received orderbook: {orderbook}")
         
         if orderbook and isinstance(orderbook, dict) and 'orderbook_units' in orderbook and len(orderbook['orderbook_units']) > 0:
             first_unit = orderbook['orderbook_units'][0]
@@ -88,7 +92,7 @@ def get_simplified_orderbook():
                 "bid_size": first_unit['bid_size']
             }
         else:
-            logging.warning("Orderbook structure is not as expected")
+            autotrade_logger.warning("Orderbook structure is not as expected")
             return {
                 "ask_price": 0,
                 "bid_price": 0,
@@ -96,7 +100,7 @@ def get_simplified_orderbook():
                 "bid_size": 0
             }
     except Exception as e:
-        logging.error(f"Error in get_simplified_orderbook: {str(e)}", exc_info=True)
+        autotrade_logger.error(f"Error in get_simplified_orderbook: {str(e)}", exc_info=True)
         return {
             "ask_price": 0,
             "bid_price": 0,
@@ -134,7 +138,7 @@ def get_fear_and_greed_index():
             "classification": data["data"][0]["value_classification"]
         }
     except Exception as e:
-        logging.error(f"Error fetching Fear and Greed Index: {e}")
+        autotrade_logger.error(f"Error fetching Fear and Greed Index: {e}")
         return {"value": None, "classification": None}
 
 # SQLite 데이터베이스 초기화
@@ -177,15 +181,14 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
 
     try:
         cursor.execute('''
-        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price,
-                            btc_krw_price, success, reflection, total_assets_krw, cumulative_reflection, short_term_necessity)
+        INSERT INTO trades (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price, success, reflection, total_assets_krw, cumulative_reflection, short_term_necessity)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price,
               int(success), reflection, total_assets_krw, cumulative_reflection, short_term_necessity))
         conn.commit()
-        logging.info(f"거래가 성공적으로 저장되었습니다: {decision}, {success}")
+        autotrade_logger.info(f"거래가 성공적으로 저장되었습니다: {decision}, {success}")
     except sqlite3.Error as e:
-        logging.error(f"거래 저장 중 오류 발생: {e}")
+        autotrade_logger.error(f"거래 저장 중 오류 발생: {e}")
         conn.rollback()
 
 # 최근 거래 가져오기 함수 수정
@@ -239,7 +242,7 @@ def analyze_performance(trades, current_price):
                     'success': True
                 })
 
-    # 마지막 거래 이후의 현재 총 자산 계산
+    # 마지막 거래 이후 현재 총 자산 계산
     if trades:
         last_trade = trades[0]  # 가장 최근 거래
         current_assets = (last_trade['krw_balance'] + 
@@ -259,7 +262,7 @@ def analyze_performance(trades, current_price):
     avg_profit_percentage = total_profit_percentage / recent_trades_count if recent_trades_count > 0 else 0
     
     # avg_profit_percentage의 타입 로깅
-    logging.info(f"avg_profit_percentage type: {type(avg_profit_percentage)}")
+    autotrade_logger.info(f"avg_profit_percentage type: {type(avg_profit_percentage)}")
     
     return performance, avg_profit_percentage
 
@@ -293,13 +296,13 @@ def generate_reflection(performance, strategies, trades, avg_profit, previous_re
 # 변동성 계산
 def calculate_volatility(df, window=14):
     df['daily_return'] = df['close'].pct_change()
-    volatility = df['daily_return'].rolling(window=window).std() * (252 ** 0.5)
+    volatility = df['daily_return'].rolling(window=window).std() * np.sqrt(365)
     return volatility.iloc[-1]
 
 def get_volatility_data():
     df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
     current_volatility = calculate_volatility(df)
-    avg_volatility = df['daily_return'].std() * (252 ** 0.5)
+    avg_volatility = df['daily_return'].std() * np.sqrt(365)
 
     return {
         "current_volatility": current_volatility,
@@ -319,7 +322,7 @@ def get_mediastack_news():
             news_cache['mediastack'] = [{'title': item['title'], 'description': item['description']} for item in news]
             news_cache['last_update'] = current_time
         except requests.RequestException as e:
-            logging.error(f"MediaStack API error: {str(e)}")
+            autotrade_logger.error(f"MediaStack API error: {str(e)}")
             return []
     return news_cache['mediastack']
 
@@ -336,7 +339,7 @@ def get_cryptocompare_news():
             news_cache['cryptocompare'] = [{'title': item['title'], 'body': item['body']} for item in news[:10]]
             news_cache['last_update'] = current_time
         except requests.RequestException as e:
-            logging.error(f"CryptoCompare API error: {str(e)}")
+            autotrade_logger.error(f"CryptoCompare API error: {str(e)}")
             return []
     return news_cache['cryptocompare']
 
@@ -403,9 +406,9 @@ def check_balance_for_trade(upbit, decision, percentage):
             return False, f"Insufficient BTC balance for sell order. Minimum required: {MIN_TRADE_AMOUNT / current_status['btc_price']} BTC"
     return True, ""
 
-# add_indicators 함수 수정
+# add_indicators 함
 def add_indicators(df):
-    # 볼린저 밴드
+    # 볼린저 밴
     indicator_bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
     df['bb_bbm'] = indicator_bb.bollinger_mavg()
     df['bb_bbh'] = indicator_bb.bollinger_hband()
@@ -459,16 +462,16 @@ def prepare_data_for_api(data):
 
 # ai_trading 함
 def ai_trading():
-    logging.info("Starting ai_trading function")
+    autotrade_logger.info("Starting ai_trading function")
 
     try:
         upbit = pyupbit.Upbit(os.getenv('UPBIT_ACCESS_KEY'), os.getenv('UPBIT_SECRET_KEY'))
         current_status = get_current_status(upbit)
         try:
             orderbook = get_simplified_orderbook()
-            logging.info(f"Simplified orderbook: {orderbook}")
+            autotrade_logger.info(f"Simplified orderbook: {orderbook}")
         except Exception as e:
-            logging.error(f"Error getting simplified orderbook: {str(e)}", exc_info=True)
+            autotrade_logger.error(f"Error getting simplified orderbook: {str(e)}", exc_info=True)
             orderbook = {
                 "ask_price": 0,
                 "bid_price": 0,
@@ -488,7 +491,7 @@ def ai_trading():
             trade_count = cursor.fetchone()[0]
 
             if trade_count == 0:
-                logging.info("No trades found. Creating initial trade data.")
+                autotrade_logger.info("No trades found. Creating initial trade data.")
                 save_trade(conn,
                            'initial',
                            0,
@@ -541,7 +544,7 @@ def ai_trading():
             recent_trades_serializable = prepare_data_for_api(recent_trades)
 
             # avg_profit의 타입 로깅
-            logging.info(f"avg_profit type: {type(avg_profit)}")
+            autotrade_logger.info(f"avg_profit type: {type(avg_profit)}")
 
             # JSON 직렬화 시 float로 변환
             avg_profit_serializable = float(avg_profit)
@@ -602,11 +605,11 @@ Based on this information, what trading decision should be made? Please provide 
             result = json.loads(function_call.arguments)
 
         except Exception as e:
-            logging.error(f"OpenAI API 오류: {str(e)}")
+            autotrade_logger.error(f"OpenAI API 오류: {str(e)}")
             raise
 
         assistant_message = json.dumps(result)
-        logging.info(f"AI response: {assistant_message}")
+        autotrade_logger.info(f"AI response: {assistant_message}")
 
         decision = result['decision']
         percentage = result['percentage']
@@ -614,17 +617,17 @@ Based on this information, what trading decision should be made? Please provide 
         short_term_necessity = result.get('short_term_necessity', 0.5)
         if short_term_necessity is None:
             short_term_necessity = 0.5
-        logging.info(f"Short-term trading necessity score: {short_term_necessity}")
+        autotrade_logger.info(f"Short-term trading necessity score: {short_term_necessity}")
 
         if decision == 'sell' and current_btc_balance == 0:
             decision = 'hold'
             reason = "Changed to hold because current BTC balance is 0"
-            logging.info("Decision changed to hold due to zero BTC balance")
+            autotrade_logger.info("Decision changed to hold due to zero BTC balance")
 
         if decision != 'hold':
             balance_ok, message = check_balance_for_trade(upbit, decision, percentage)
             if not balance_ok:
-                logging.warning(message)
+                autotrade_logger.warning(message)
                 save_trade(conn, decision, percentage, reason,
                            current_status['btc_balance'],
                            current_status['krw_balance'],
@@ -639,7 +642,7 @@ Based on this information, what trading decision should be made? Please provide 
                     if decision == 'buy':
                         krw_balance = upbit.get_balance("KRW")
                         trade_amount = krw_balance * (percentage / 100)
-                        trade_amount = min(trade_amount, krw_balance)  # 사용 가능한 잔액으로 조정
+                        trade_amount = min(trade_amount, krw_balance)  # 용 가능한 잔액으로 조정
                         trade_amount_with_fee = trade_amount / (1 + TRADE_FEE)  # 수수료를 고려한 실제 거래 금액
                         if trade_amount_with_fee >= MIN_TRADE_AMOUNT:
                             order = upbit.buy_market_order("KRW-BTC", trade_amount_with_fee)
@@ -671,19 +674,19 @@ Based on this information, what trading decision should be made? Please provide 
                                reflection=reflection,
                                cumulative_reflection=updated_summary,
                                short_term_necessity=short_term_necessity)
-                    logging.info(f"Trade saved: {decision}, {percentage}%, {reason}")
+                    autotrade_logger.info(f"Trade saved: {decision}, {percentage}%, {reason}")
 
-                    logging.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
+                    autotrade_logger.info(f"Trade executed successfully: {decision} {percentage}% of balance. Reason: {reason}")
 
                     # 거래 완료 후 시간 정보 로깅 추가
                     current_time = datetime.now()
                     interval = calculate_trading_interval(short_term_necessity)
                     next_trade_time = current_time + timedelta(seconds=interval)
-                    logging.info(f"Trade completed at: {current_time}")
-                    logging.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+                    autotrade_logger.info(f"Trade completed at: {current_time}")
+                    autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
 
                 except Exception as trade_error:
-                    logging.error(f"Trade execution failed: {str(trade_error)}")
+                    autotrade_logger.error(f"Trade execution failed: {str(trade_error)}")
                     save_trade(conn,
                                'error',
                                0,
@@ -697,7 +700,7 @@ Based on this information, what trading decision should be made? Please provide 
                                cumulative_reflection=updated_summary,
                                short_term_necessity=short_term_necessity)
         else:
-            logging.info(f"Decision: Hold. Reason: {reason}")
+            autotrade_logger.info(f"Decision: Hold. Reason: {reason}")
             save_trade(conn,
                        'hold',
                        0,
@@ -710,19 +713,19 @@ Based on this information, what trading decision should be made? Please provide 
                        reflection=reflection,
                        cumulative_reflection=updated_summary,
                        short_term_necessity=short_term_necessity)
-            logging.info(f"Hold decision saved: {reason}")
+            autotrade_logger.info(f"Hold decision saved: {reason}")
 
             # 홀드 결정 후 시간 정보 로깅 추가
             current_time = datetime.now()
             interval = calculate_trading_interval(short_term_necessity)
             next_trade_time = current_time + timedelta(seconds=interval)
-            logging.info(f"Hold decision made at: {current_time}")
-            logging.info(f"Next trade check scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+            autotrade_logger.info(f"Hold decision made at: {current_time}")
+            autotrade_logger.info(f"Next trade check scheduled in {interval/60:.2f} minutes at {next_trade_time}")
 
         return {'short_term_necessity': short_term_necessity}
 
     except Exception as e:
-        logging.error(f"Error in ai_trading: {str(e)}")
+        autotrade_logger.error(f"Error in ai_trading: {str(e)}")
         save_trade(conn,
                    'error',
                    0,
@@ -735,12 +738,12 @@ Based on this information, what trading decision should be made? Please provide 
                    reflection="Error in ai_trading function",
                    cumulative_reflection="Error occurred during trading",
                    short_term_necessity=None)
-        logging.info("Error trade saved")
+        autotrade_logger.info("Error trade saved")
         return {'short_term_necessity': None}
     finally:
         if 'conn' in locals():
             conn.close()
-        logging.info("Finished ai_trading function")
+        autotrade_logger.info("Finished ai_trading function")
 
 # Check market volatility
 def check_market_volatility():
@@ -766,34 +769,86 @@ def calculate_trading_interval(short_term_necessity):
     # short_term_necessity를 사용하여 선형적으로 간격 조정
     interval = max_interval - (short_term_necessity * (max_interval - min_interval))
 
-    # 간격이 min_interval과 max_interval 사이에 있도록 보장
+    # 간격이 min_interval과 max_interval 사이에 도록 보장
     interval = max(min(interval, max_interval), min_interval)
 
     return int(interval)  # 정수로 반환
 
+def get_current_volatility():
+    try:
+        df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
+        current_volatility = calculate_volatility(df)
+        avg_volatility = df['daily_return'].std() * np.sqrt(365)
+        
+        df_24h = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
+        if len(df_24h) > 0:
+            short_term_volatility = (df_24h['high'].max() - df_24h['low'].min()) / df_24h['open'].iloc[0]
+        else:
+            short_term_volatility = None
+        
+        df_1hour = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
+        if len(df_1hour) > 0:
+            autotrade_volatility = (df_1hour['high'] - df_1hour['low']).mean() / df_1hour['open'].mean()
+        else:
+            autotrade_volatility = None
+        
+        print("Volatility calculated successfully")
+        return current_volatility, avg_volatility, short_term_volatility, autotrade_volatility
+    except Exception as e:
+        print(f"Error calculating volatility: {e}")
+        return None, None, None, None
+
+def get_average_volume(interval="day", count=14):
+    try:
+        df = pyupbit.get_ohlcv("KRW-BTC", interval=interval, count=count)
+        avg_volume = df['volume'].mean()
+        return avg_volume
+    except Exception as e:
+        autotrade_logger.error(f"Error getting average volume: {str(e)}")
+        return None
+
+def get_10min_data():
+    try:
+        df = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=1)
+        volatility = (df['high'].iloc[0] - df['low'].iloc[0]) / df['open'].iloc[0]
+        volume = df['volume'].iloc[0]
+        return volatility, volume
+    except Exception as e:
+        autotrade_logger.error(f"Error getting 10-minute data: {e}")
+        return None, None
+
 def check_market_conditions():
     current_volatility, avg_volatility, short_term_volatility, autotrade_volatility = get_current_volatility()
-    volume_data = check_trading_volume()
-    ten_min_volatility = get_10min_volatility()
-    ten_min_volume = get_10min_volume()
+    ten_min_volatility, ten_min_volume = get_10min_data()
+    avg_volume_24h = get_average_volume(interval="minute60", count=24)
+    avg_volume_14d = get_average_volume(interval="day", count=14)
     
-    if current_volatility is None or volume_data is None or ten_min_volatility is None or ten_min_volume is None:
-        logging.error("Failed to get volatility or volume data")
+    if any(v is None for v in [current_volatility, short_term_volatility, ten_min_volatility, ten_min_volume, avg_volume_24h, avg_volume_14d]):
+        autotrade_logger.error("Failed to get volatility or volume data")
         return False
-
-    avg_10min_volume_24h = volume_data['avg_volume_24h'] / 144
-    avg_10min_volume_14d = volume_data['avg_volume_14d'] / 2016
 
     # 변동성 조건 확인
     volatility_condition_1 = ten_min_volatility > short_term_volatility * 1.5
     volatility_condition_2 = ten_min_volatility > current_volatility * 3
 
     # 거래량 조건 확인
-    volume_condition_1 = ten_min_volume > avg_10min_volume_24h * 1.5
-    volume_condition_2 = ten_min_volume > avg_10min_volume_14d * 3
+    volume_condition_1 = ten_min_volume > (avg_volume_24h / 144) * 1.5
+    volume_condition_2 = ten_min_volume > (avg_volume_14d / 2016) * 3
 
     # 종합 조건 확인
     market_condition = (volatility_condition_1 or volatility_condition_2) or (volume_condition_1 or volume_condition_2)
+
+    autotrade_logger.info(f"10-min volatility: {ten_min_volatility:.4f}")
+    autotrade_logger.info(f"24-hour volatility: {short_term_volatility:.4f}")
+    autotrade_logger.info(f"14-day volatility: {current_volatility:.4f}")
+    autotrade_logger.info(f"10-min volume: {ten_min_volume:.2f}")
+    autotrade_logger.info(f"Avg 24-hour volume: {avg_volume_24h:.2f}")
+    autotrade_logger.info(f"Avg 14-day volume: {avg_volume_14d:.2f}")
+    autotrade_logger.info(f"Volatility condition 1 (10-min > 24-hour * 1.5): {volatility_condition_1}")
+    autotrade_logger.info(f"Volatility condition 2 (10-min > 14-day * 3): {volatility_condition_2}")
+    autotrade_logger.info(f"Volume condition 1 (10-min > 24-hour/144 * 1.5): {volume_condition_1}")
+    autotrade_logger.info(f"Volume condition 2 (10-min > 14-day/2016 * 3): {volume_condition_2}")
+    autotrade_logger.info(f"Market condition: {market_condition}")
 
     return market_condition
 
@@ -842,12 +897,12 @@ def terminate_process(pid):
         process.terminate()
         process.wait(timeout=10)
     except psutil.NoSuchProcess:
-        logging.info(f"No process found with PID {pid}")
+        autotrade_logger.info(f"No process found with PID {pid}")
     except psutil.TimeoutExpired:
-        logging.warning(f"Process {pid} did not terminate. Forcing kill...")
+        autotrade_logger.warning(f"Process {pid} did not terminate. Forcing kill...")
         process.kill()
     except Exception as e:
-        logging.error(f"Error terminating process {pid}: {e}")
+        autotrade_logger.error(f"Error terminating process {pid}: {e}")
 
 def analyze_historical_conditions():
     df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=1000)
@@ -875,7 +930,7 @@ if __name__ == "__main__":
         lock_fd = acquire_lock(lockfile)
 
         if lock_fd is None:
-            logging.info("Another instance is already running. Attempting to terminate the existing process...")
+            autotrade_logger.info("Another instance is already running. Attempting to terminate the existing process...")
             try:
                 with open(lockfile, 'r') as f:
                     pid = int(f.read().strip())
@@ -886,13 +941,13 @@ if __name__ == "__main__":
 
                 lock_fd = acquire_lock(lockfile)
                 if lock_fd is None:
-                    logging.error("Failed to acquire lock even after terminating the previous process. Exiting.")
+                    autotrade_logger.error("Failed to acquire lock even after terminating the previous process. Exiting.")
                     sys.exit(1)
             except Exception as e:
-                logging.error(f"Error while trying to terminate the previous process: {e}")
+                autotrade_logger.error(f"Error while trying to terminate the previous process: {e}")
                 sys.exit(1)
 
-        logging.info("Starting autotrade script")
+        autotrade_logger.info("Starting autotrade script")
 
         conn = init_db()
         cursor = conn.cursor()
@@ -900,7 +955,7 @@ if __name__ == "__main__":
         trade_count = cursor.fetchone()[0]
 
         if trade_count == 0:
-            logging.info("No trades found. Making first trading decision.")
+            autotrade_logger.info("No trades found. Making first trading decision.")
             trade_result = ai_trading()
             last_trade_time = datetime.now()
             short_term_necessity = trade_result.get('short_term_necessity', 0.5)
@@ -912,8 +967,8 @@ if __name__ == "__main__":
             next_trade_time = last_trade_time + timedelta(seconds=interval)
             save_next_trade_time(next_trade_time)
             save_last_trade_time(last_trade_time)
-            logging.info(f"First trade made at: {last_trade_time}")
-            logging.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+            autotrade_logger.info(f"First trade made at: {last_trade_time}")
+            autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
         else:
             last_trade_time = load_last_trade_time()
             next_trade_time = load_next_trade_time()
@@ -943,8 +998,8 @@ if __name__ == "__main__":
                     save_next_trade_time(next_trade_time)
                     save_last_trade_time(last_trade_time)
 
-                    logging.info(f"Trade decision made at: {current_time}")
-                    logging.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+                    autotrade_logger.info(f"Trade decision made at: {current_time}")
+                    autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
                 else:
                     if check_market_conditions() and time_since_last_trade >= MIN_TRADE_INTERVAL:
                         trade_result = ai_trading()
@@ -959,23 +1014,39 @@ if __name__ == "__main__":
                         save_next_trade_time(next_trade_time)
                         save_last_trade_time(last_trade_time)
 
-                        logging.info(f"Market conditions met. Trade decision made at: {current_time}")
-                        logging.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+                        autotrade_logger.info(f"Market conditions met. Trade decision made at: {current_time}")
+                        autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
                     else:
-                        logging.info(f"Next trade check in {time_until_next_trade/60:.2f} minutes at {next_trade_time}")
+                        autotrade_logger.info(f"Next trade check in {time_until_next_trade/60:.2f} minutes at {next_trade_time}")
 
                 time.sleep(300)  # Check every 5 minutes
 
             except Exception as e:
-                logging.error(f"Error in main loop: {str(e)}", exc_info=True)
+                autotrade_logger.error(f"Error in main loop: {str(e)}", exc_info=True)
                 time.sleep(300)  # Retry after 5 minutes if error occurs
 
     except Exception as e:
-        logging.error(f"메인 스크립트에서 예상치 못한 오류 발생: {str(e)}", exc_info=True)
+        autotrade_logger.error(f"메인 크립트에 예상치 못한 오 발생: {str(e)}", exc_info=True)
     finally:
         if lock_fd:
             release_lock(lock_fd)
         if os.path.exists(lockfile):
             os.remove(lockfile)
-        logging.info("Autotrade 스크립트 종료.")
+        autotrade_logger.info("Autotrade 스크립트 종료.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
