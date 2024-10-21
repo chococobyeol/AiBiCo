@@ -44,9 +44,10 @@ news_cache = {'mediastack': None, 'cryptocompare': None, 'last_update': None}
 # 최소 거래 간격(초 단위)
 MIN_TRADE_INTERVAL = 600  # 10분
 
-# 상수 정의
+# 수 정의
 MIN_TRADE_AMOUNT = 5000  # 최소 거래 금액 (원)
 TRADE_FEE = 0.0005  # 거래 수수료 (0.05%)
+MIN_TRADE_AMOUNT_WITH_FEE = MIN_TRADE_AMOUNT / (1 - TRADE_FEE)
 
 # 전략 파일 읽기
 def read_strategies():
@@ -357,7 +358,7 @@ def get_news():
 
     return cleaned_news[:3]  # 뉴스 헤드라인 수를 3개로 제한
 
-# 반성 요약 가져오기
+# 반성 요약 가져��기
 def get_reflection_summary(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
@@ -389,21 +390,24 @@ def update_reflection_summary(conn, new_reflection, previous_summary):
 
     return updated_summary
 
+# check_balance_for_trade 함수 수정
 def check_balance_for_trade(upbit, decision, percentage):
     current_status = get_current_status(upbit)
     if current_status is None:
-        return False, "Failed to get current status"
+        return False, "Failed to retrieve current status"
 
     if decision == 'buy':
         available_krw = current_status['krw_balance']
+        if available_krw < MIN_TRADE_AMOUNT_WITH_FEE:
+            return False, f"Insufficient KRW balance for purchase. Minimum required: {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including fee), Current balance: {available_krw:.2f} KRW"
         trade_amount = available_krw * (percentage / 100)
-        if trade_amount < MIN_TRADE_AMOUNT:
-            return False, f"Insufficient KRW balance for buy order. Minimum required: {MIN_TRADE_AMOUNT} KRW"
+        if trade_amount < MIN_TRADE_AMOUNT_WITH_FEE:
+            return False, f"Buy order amount too small. Minimum trade amount: {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including fee)"
     elif decision == 'sell':
         available_btc = current_status['btc_balance']
         trade_amount = available_btc * (percentage / 100) * current_status['btc_price']
         if trade_amount < MIN_TRADE_AMOUNT:
-            return False, f"Insufficient BTC balance for sell order. Minimum required: {MIN_TRADE_AMOUNT / current_status['btc_price']} BTC"
+            return False, f"Sell order amount too small. Minimum trade amount: {MIN_TRADE_AMOUNT} KRW"
     return True, ""
 
 # add_indicators 함
@@ -467,6 +471,10 @@ def ai_trading():
     try:
         upbit = pyupbit.Upbit(os.getenv('UPBIT_ACCESS_KEY'), os.getenv('UPBIT_SECRET_KEY'))
         current_status = get_current_status(upbit)
+        if current_status is None:
+            autotrade_logger.error("Failed to get current status")
+            return {'short_term_necessity': None}
+
         try:
             orderbook = get_simplified_orderbook()
             autotrade_logger.info(f"Simplified orderbook: {orderbook}")
@@ -521,18 +529,22 @@ def ai_trading():
             current_btc_balance = current_status['btc_balance']
 
             system_message = f"""You are an AI trading assistant. Analyze the given market data and make a trading decision.
-    Consider the following reflection summary on recent performance:\n\n{updated_summary}
-    Current BTC balance: {current_btc_balance}
-    IMPORTANT: If the current BTC balance is 0, do not make a 'sell' decision.
+Consider the following reflection summary on recent performance:\n\n{updated_summary}
+Current BTC balance: {current_status['btc_balance']}
+Current KRW balance: {current_status['krw_balance']}
 
-    Additionally, evaluate the necessity for short-term trading based on current market conditions.
-    The trading interval can be adjusted between 10 minutes (for very short-term trading) and 8 hours (for longer-term trading).
-    Provide a short-term trading necessity score from 0.00 to 1.00, where:
-    0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
-    1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
-    Base this score on market volatility, recent news impact, and potential short-term opportunities.
-    Use a precise two-decimal score (e.g., 0.23, 0.84, 0.51) to accurately reflect the current market conditions.
-    Avoid using rounded values like 0.10, 0.25, 0.50, etc. Instead, provide a more nuanced assessment."""
+IMPORTANT RULES:
+1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead.
+2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead.
+
+Additionally, evaluate the necessity for short-term trading based on current market conditions.
+The trading interval can be adjusted between 10 minutes (for very short-term trading) and 8 hours (for longer-term trading).
+Provide a short-term trading necessity score from 0.00 to 1.00, where:
+0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
+1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
+Base this score on market volatility, recent news impact, and potential short-term opportunities.
+Use a precise two-decimal score (e.g., 0.23, 0.84, 0.51) to accurately reflect the current market conditions.
+Avoid using rounded values like 0.10, 0.25, 0.50, etc. Instead, provide a more nuanced assessment."""
 
             # 모든 데이터를 JSON 직렬화 가한 형태로 변환
             current_status_serializable = prepare_data_for_api(current_status)
@@ -565,6 +577,8 @@ Strategies: {strategies}
 Recent trades (last 5): {json.dumps(recent_trades_serializable)}
 Average profit: {avg_profit_serializable}
 Reflection: {reflection}
+Current KRW balance: {current_status['krw_balance']}
+Current BTC balance: {current_status['btc_balance']}
 
 Based on this information, what trading decision should be made? Please provide your decision (buy, sell, or hold), the percentage (0-100), and a detailed reason for your decision. Consider the short-term trends visible in the 10-minute data for more immediate market movements.
                     """}
@@ -637,6 +651,7 @@ Based on this information, what trading decision should be made? Please provide 
                            reflection=message,
                            cumulative_reflection=updated_summary,
                            short_term_necessity=short_term_necessity)
+                return {'short_term_necessity': short_term_necessity}  # 여기서 함수 종료
             else:
                 try:
                     if decision == 'buy':
