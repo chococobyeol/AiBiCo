@@ -171,7 +171,7 @@ def save_trade(conn, decision, percentage, reason, btc_balance, krw_balance, btc
         ''', (timestamp, decision, percentage, reason, btc_balance, krw_balance, btc_avg_buy_price, btc_krw_price,
               int(success), reflection, total_assets_krw, cumulative_reflection, short_term_necessity))
         conn.commit()
-        logging.info(f"거래가 성공적으로 저장되었습니다: {decision}, {success}")
+        logging.info(f"거래가 성��적으로 저장되었습니다: {decision}, {success}")
     except sqlite3.Error as e:
         logging.error(f"거래 저장 중 오류 발생: {e}")
         conn.rollback()
@@ -196,38 +196,39 @@ def get_recent_trades(conn, days=7, limit=5):  # limit를 5로 변경
     return trades
 
 # 성과 분석 함수 수정
-def analyze_performance(trades, current_price):
+def analyze_performance(trades, current_price, upbit):
     performance = []
-    total_profit = 0
-    successful_trades = 0
-    for trade in trades:
-        if trade['success'] == 0:
-            performance.append({
-                'decision': trade['decision'],
-                'timestamp': trade['timestamp'],
-                'profit': 0,
-                'reason': trade['reason'],
-                'success': False
-            })
-        else:
-            if trade['decision'] == 'buy':
-                profit = (current_price - trade['btc_krw_price']) / trade['btc_krw_price'] * 100
-            elif trade['decision'] == 'sell':
-                profit = (trade['btc_krw_price'] - current_price) / current_price * 100
-            else:
-                profit = 0
-            total_profit += profit
-            successful_trades += 1
-            performance.append({
-                'decision': trade['decision'],
-                'timestamp': trade['timestamp'],
-                'profit': profit,
-                'reason': trade['reason'],
-                'success': True
-            })
+    initial_assets = None
+    previous_assets = None
 
-    avg_profit = total_profit / successful_trades if successful_trades > 0 else 0
-    return performance, avg_profit
+    for trade in trades:
+        current_assets = upbit.get_amount('ALL')
+        
+        if initial_assets is None:
+            initial_assets = current_assets
+            previous_assets = current_assets
+        
+        profit_percentage = ((current_assets - previous_assets) / previous_assets) * 100 if previous_assets > 0 else 0
+        total_profit_percentage = ((current_assets - initial_assets) / initial_assets) * 100 if initial_assets > 0 else 0
+        
+        performance.append({
+            'decision': trade['decision'],
+            'timestamp': trade['timestamp'],
+            'profit_percentage': profit_percentage,
+            'total_profit_percentage': total_profit_percentage,
+            'reason': trade['reason'],
+            'success': trade['success'] == 1,
+            'total_assets': current_assets
+        })
+        
+        previous_assets = current_assets
+
+    final_assets = upbit.get_amount('ALL')
+    final_total_profit_percentage = ((final_assets - initial_assets) / initial_assets) * 100 if initial_assets > 0 else 0
+
+    avg_profit_percentage = sum(p['profit_percentage'] for p in performance) / len(performance) if performance else 0
+
+    return performance, avg_profit_percentage, final_total_profit_percentage, final_assets
 
 # 반성 생성
 def generate_reflection(performance, strategies, trades, avg_profit, previous_reflections):
@@ -415,7 +416,7 @@ def convert_to_serializable(obj):
     elif isinstance(obj, datetime):
         return obj.isoformat()
     else:
-        return str(obj)  # 다른 모든 타입을 문자로 변환
+        return str(obj)  # 다른 모든 타입을 자로 변환
 
 def prepare_data_for_api(data):
     return json.loads(json.dumps(data, default=convert_to_serializable))
@@ -466,7 +467,7 @@ def ai_trading():
 
             recent_trades = get_recent_trades(conn, limit=5)
             current_price = pyupbit.get_current_price("KRW-BTC")
-            performance, avg_profit = analyze_performance(recent_trades, current_price)
+            performance, avg_profit, total_profit_percentage, final_assets = analyze_performance(recent_trades, current_price, upbit)
             strategies = read_strategies()
             previous_summary = get_reflection_summary(conn)
 
