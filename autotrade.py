@@ -847,8 +847,8 @@ def check_market_conditions():
     volatility_condition_2 = ten_min_volatility > current_volatility * 3
 
     # 거래량 조건 확인
-    volume_condition_1 = ten_min_volume > (avg_volume_24h / 144) * 1.5
-    volume_condition_2 = ten_min_volume > (avg_volume_14d / 2016) * 3
+    volume_condition_1 = ten_min_volume > (avg_volume_24h / 6) * 1.5
+    volume_condition_2 = ten_min_volume > (avg_volume_14d / 144) * 3
 
     # 종합 조건 확인
     market_condition = (volatility_condition_1 or volatility_condition_2) or (volume_condition_1 or volume_condition_2)
@@ -861,8 +861,8 @@ def check_market_conditions():
     autotrade_logger.info(f"Avg 14-day volume: {avg_volume_14d:.2f}")
     autotrade_logger.info(f"Volatility condition 1 (10-min > 24-hour * 1.5): {volatility_condition_1}")
     autotrade_logger.info(f"Volatility condition 2 (10-min > 14-day * 3): {volatility_condition_2}")
-    autotrade_logger.info(f"Volume condition 1 (10-min > 24-hour/144 * 1.5): {volume_condition_1}")
-    autotrade_logger.info(f"Volume condition 2 (10-min > 14-day/2016 * 3): {volume_condition_2}")
+    autotrade_logger.info(f"Volume condition 1 (10-min > 24-hour/6 * 1.5): {volume_condition_1}")
+    autotrade_logger.info(f"Volume condition 2 (10-min > 14-day/144 * 3): {volume_condition_2}")
     autotrade_logger.info(f"Market condition: {market_condition}")
 
     return market_condition
