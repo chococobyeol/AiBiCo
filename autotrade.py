@@ -790,29 +790,6 @@ def calculate_trading_interval(short_term_necessity):
 
     return int(interval)  # 정수로 반환
 
-def get_current_volatility():
-    try:
-        df = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
-        current_volatility = calculate_volatility(df)
-        avg_volatility = df['daily_return'].std() * np.sqrt(365)
-        
-        df_24h = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
-        if len(df_24h) > 0:
-            short_term_volatility = (df_24h['high'].max() - df_24h['low'].min()) / df_24h['open'].iloc[0]
-        else:
-            short_term_volatility = None
-        
-        df_1hour = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=24)
-        if len(df_1hour) > 0:
-            autotrade_volatility = (df_1hour['high'] - df_1hour['low']).mean() / df_1hour['open'].mean()
-        else:
-            autotrade_volatility = None
-        
-        print("Volatility calculated successfully")
-        return current_volatility, avg_volatility, short_term_volatility, autotrade_volatility
-    except Exception as e:
-        print(f"Error calculating volatility: {e}")
-        return None, None, None, None
 
 def get_average_volume(interval="day", count=14):
     try:
@@ -834,7 +811,20 @@ def get_10min_data():
         return None, None
 
 def check_market_conditions():
-    current_volatility, avg_volatility, short_term_volatility, autotrade_volatility = get_current_volatility()
+    # 24시간 변동성: 10분 변동성들의 평균
+    df_24h = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=144)  # 24시간 동안의 10분 데이터
+    if len(df_24h) > 0:
+        short_term_volatility = (df_24h['high'] - df_24h['low']).mean() / df_24h['open'].mean()
+    else:
+        short_term_volatility = None
+
+    # 14일 변동성: 10분 변동성들의 평균
+    df_14d = pyupbit.get_ohlcv("KRW-BTC", interval="minute10", count=2016)  # 14일 동안의 10분 데이터
+    if len(df_14d) > 0:
+        current_volatility = (df_14d['high'] - df_14d['low']).mean() / df_14d['open'].mean()
+    else:
+        current_volatility = None
+
     ten_min_volatility, ten_min_volume = get_10min_data()
     avg_volume_24h = get_average_volume(interval="minute60", count=24)
     avg_volume_14d = get_average_volume(interval="day", count=14)
