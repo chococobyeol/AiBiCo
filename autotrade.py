@@ -210,12 +210,14 @@ def get_recent_trades(conn, days=7, limit=5):  # limit를 5로 변경
 # 성과 분석 함수 수정
 def analyze_performance(trades, current_price):
     performance = []
-    total_profit_percentage = 0
-    recent_trades_count = 0
+    trade_profit_percentages = []
     initial_assets = None
 
     if not trades:
         return performance, 0
+
+    # 거래 내역을 시간 순서대로 정렬 (오래된 거래부터)
+    trades = sorted(trades, key=lambda x: x['timestamp'])
 
     # 초기 자산 설정 (첫 번째 거래의 총 자산)
     initial_assets = trades[0]['total_assets_krw']
@@ -233,10 +235,10 @@ def analyze_performance(trades, current_price):
                 'success': False
             })
         else:
+            # 각 거래 간의 수익률 계산 (첫 거래 이후부터)
             if i >= 1:
                 profit_percentage = ((current_assets - previous_assets) / previous_assets) * 100
-                total_profit_percentage += profit_percentage
-                recent_trades_count += 1
+                trade_profit_percentages.append(profit_percentage)
 
                 performance.append({
                     'decision': trade['decision'],
@@ -248,25 +250,11 @@ def analyze_performance(trades, current_price):
 
             previous_assets = current_assets
 
-    # 마지막 거래 이후 현재 총 자산 계산
-    last_trade = trades[-1]  # 가장 최근 거래로 수정
-    current_assets = last_trade['krw_balance'] + last_trade['btc_balance'] * current_price
-    final_profit_percentage = ((current_assets - initial_assets) / initial_assets) * 100
-    total_profit_percentage += final_profit_percentage
-    recent_trades_count += 1
-
-    performance.append({
-        'decision': 'current',
-        'timestamp': datetime.now().isoformat(),
-        'profit_percentage': final_profit_percentage,
-        'reason': 'Current market status',
-        'success': True
-    })
-
-    avg_profit_percentage = total_profit_percentage / recent_trades_count if recent_trades_count > 0 else 0
-
-    # avg_profit_percentage의 타입 로깅
-    autotrade_logger.info(f"avg_profit_percentage type: {type(avg_profit_percentage)}")
+    # 평균 수익률 계산
+    if trade_profit_percentages:
+        avg_profit_percentage = sum(trade_profit_percentages) / len(trade_profit_percentages)
+    else:
+        avg_profit_percentage = 0
 
     return performance, avg_profit_percentage
 
