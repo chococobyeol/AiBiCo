@@ -477,11 +477,17 @@ def ai_trading():
                 "ask_size": 0,
                 "bid_size": 0
             }
+
         chart_data = get_simplified_chart_data()
         fear_greed_index = get_fear_and_greed_index()
         volatility_data = get_volatility_data()
         news = get_news()
 
+        # ** 추가된 지표 사용을 위한 데이터 준비 **
+        daily_indicators = chart_data['daily']
+        ten_min_indicators = chart_data['10min']
+
+        # Conn 및 DB 관련 코드는 기존과 동일합니다.
         conn = init_db()
 
         try:
@@ -519,6 +525,7 @@ def ai_trading():
 
             current_btc_balance = current_status['btc_balance']
 
+            # ** 시스템 메시지에 추가 지표 포함 **
             system_message = f"""You are an AI trading assistant. Analyze the given market data and make a trading decision.
 Consider the following reflection summary on recent performance:\n\n{updated_summary}
 Current BTC balance: {current_status['btc_balance']}
@@ -527,6 +534,18 @@ Current KRW balance: {current_status['krw_balance']}
 IMPORTANT RULES:
 1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead.
 2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead.
+3. If the insufficient balance is not the primary factor in the 'hold' decision, write the primary reason for the decision in the 'reason', not the insufficient balance.
+
+Here are additional indicators that should be considered:
+- Bollinger Bands (daily): {daily_indicators.get('bb_bbm', None)}, {daily_indicators.get('bb_bbh', None)}, {daily_indicators.get('bb_bbl', None)}
+- RSI (daily): {daily_indicators.get('rsi', None)}
+- MACD (daily): {daily_indicators.get('macd', None)}, Signal: {daily_indicators.get('macd_signal', None)}, Diff: {daily_indicators.get('macd_diff', None)}
+- Stochastic Oscillator (daily): %K: {daily_indicators.get('stoch_k', None)}, %D: {daily_indicators.get('stoch_d', None)}
+- ATR (daily): {daily_indicators.get('atr', None)}
+- OBV (daily): {daily_indicators.get('obv', None)}
+- 10-minute RSI: {ten_min_indicators.get('rsi', None)}
+- 10-minute MACD: {ten_min_indicators.get('macd', None)}, Signal: {ten_min_indicators.get('macd_signal', None)}, Diff: {ten_min_indicators.get('macd_diff', None)}
+- 10-minute Bollinger Bands: {ten_min_indicators.get('bb_bbm', None)}, {ten_min_indicators.get('bb_bbh', None)}, {ten_min_indicators.get('bb_bbl', None)}
 
 Additionally, evaluate the necessity for short-term trading based on current market conditions. Take into account the recent price trends, trading volume, and market volatility. 
 Analyze the potential impacts of the latest news on market sentiment and identify any emerging patterns or anomalies in the data.
@@ -534,23 +553,18 @@ The trading interval can be adjusted between 10 minutes (for very short-term tra
 Provide a short-term trading necessity score from 0.00 to 1.00, where:
 0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
 1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
-Base this score on market volatility, recent news impact, and potential short-term opportunities.
 Use a precise two-decimal score (e.g., 0.23, 0.84, 0.51) to accurately reflect the current market conditions.
 Avoid using rounded values like 0.10, 0.25, 0.50, etc. Instead, provide a more nuanced assessment."""
 
-            # 모든 데이터를 JSON 직렬화 가한 형태로 변환
+            # ** 추가된 지표들을 JSON으로 직렬화 **
             current_status_serializable = prepare_data_for_api(current_status)
             orderbook_serializable = prepare_data_for_api(orderbook)
-            chart_data_serializable = chart_data  # 이미 직렬화 능한 형태로 변환되어 있음
+            chart_data_serializable = chart_data  # 이미 직렬화된 상태
             fear_greed_index_serializable = prepare_data_for_api(fear_greed_index)
             volatility_data_serializable = prepare_data_for_api(volatility_data)
             news_serializable = prepare_data_for_api(news)
             recent_trades_serializable = prepare_data_for_api(recent_trades)
 
-            # avg_profit의 타입 로깅
-            autotrade_logger.info(f"avg_profit type: {type(avg_profit)}")
-
-            # JSON 직렬화 시 float로 변환
             avg_profit_serializable = float(avg_profit)
 
             response = client.chat.completions.create(
@@ -571,8 +585,6 @@ Average profit: {avg_profit_serializable}
 Reflection: {reflection}
 Current KRW balance: {current_status['krw_balance']}
 Current BTC balance: {current_status['btc_balance']}
-
-Based on this information, what trading decision should be made? Please provide your decision (buy, sell, or hold), the percentage (0-100), and a detailed reason for your decision. Consider the short-term trends visible in the 10-minute data for more immediate market movements.
                     """}
                 ],
                 functions=[{
@@ -649,7 +661,7 @@ Based on this information, what trading decision should be made? Please provide 
                     if decision == 'buy':
                         krw_balance = upbit.get_balance("KRW")
                         trade_amount = krw_balance * (percentage / 100)
-                        trade_amount = min(trade_amount, krw_balance)  # 용 가능한 잔액으로 조정
+                        trade_amount = min(trade_amount, krw_balance)  # 가능한 잔액으로 조정
                         trade_amount_with_fee = trade_amount / (1 + TRADE_FEE)  # 수수료를 고려한 실제 거래 금액
                         if trade_amount_with_fee >= MIN_TRADE_AMOUNT:
                             order = upbit.buy_market_order("KRW-BTC", trade_amount_with_fee)
