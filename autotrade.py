@@ -537,7 +537,8 @@ IMPORTANT RULES:
 1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead.
 2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead.
 
-Additionally, evaluate the necessity for short-term trading based on current market conditions.
+Additionally, evaluate the necessity for short-term trading based on current market conditions. Take into account the recent price trends, trading volume, and market volatility. 
+Analyze the potential impacts of the latest news on market sentiment and identify any emerging patterns or anomalies in the data.
 The trading interval can be adjusted between 10 minutes (for very short-term trading) and 8 hours (for longer-term trading).
 Provide a short-term trading necessity score from 0.00 to 1.00, where:
 0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
