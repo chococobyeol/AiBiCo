@@ -211,15 +211,19 @@ def get_recent_trades(conn, days=7, limit=5):  # limit를 5로 변경
 def analyze_performance(trades, current_price):
     performance = []
     total_profit_percentage = 0
-    recent_trades_count = 0  # 변수명 변경
+    recent_trades_count = 0
     initial_assets = None
-    
+
+    if not trades:
+        return performance, 0
+
+    # 초기 자산 설정 (첫 번째 거래의 총 자산)
+    initial_assets = trades[0]['total_assets_krw']
+    previous_assets = initial_assets
+
     for i, trade in enumerate(trades):
-        if i == 0:
-            initial_assets = trade['total_assets_krw']
-        
         current_assets = trade['total_assets_krw']
-        
+
         if trade['success'] == 0:
             performance.append({
                 'decision': trade['decision'],
@@ -229,12 +233,11 @@ def analyze_performance(trades, current_price):
                 'success': False
             })
         else:
-            if i > 0:
-                previous_assets = trades[i-1]['total_assets_krw']
+            if i >= 1:
                 profit_percentage = ((current_assets - previous_assets) / previous_assets) * 100
                 total_profit_percentage += profit_percentage
                 recent_trades_count += 1
-                
+
                 performance.append({
                     'decision': trade['decision'],
                     'timestamp': trade['timestamp'],
@@ -243,28 +246,28 @@ def analyze_performance(trades, current_price):
                     'success': True
                 })
 
-    # 마지막 거래 이후 현재 총 자산 계산
-    if trades:
-        last_trade = trades[0]  # 가장 최근 거래
-        current_assets = (last_trade['krw_balance'] + 
-                          last_trade['btc_balance'] * current_price)
-        final_profit_percentage = ((current_assets - initial_assets) / initial_assets) * 100
-        total_profit_percentage += final_profit_percentage
-        recent_trades_count += 1
+            previous_assets = current_assets
 
-        performance.append({
-            'decision': 'current',
-            'timestamp': datetime.now().isoformat(),
-            'profit_percentage': final_profit_percentage,
-            'reason': 'Current market status',
-            'success': True
-        })
+    # 마지막 거래 이후 현재 총 자산 계산
+    last_trade = trades[-1]  # 가장 최근 거래로 수정
+    current_assets = last_trade['krw_balance'] + last_trade['btc_balance'] * current_price
+    final_profit_percentage = ((current_assets - initial_assets) / initial_assets) * 100
+    total_profit_percentage += final_profit_percentage
+    recent_trades_count += 1
+
+    performance.append({
+        'decision': 'current',
+        'timestamp': datetime.now().isoformat(),
+        'profit_percentage': final_profit_percentage,
+        'reason': 'Current market status',
+        'success': True
+    })
 
     avg_profit_percentage = total_profit_percentage / recent_trades_count if recent_trades_count > 0 else 0
-    
+
     # avg_profit_percentage의 타입 로깅
     autotrade_logger.info(f"avg_profit_percentage type: {type(avg_profit_percentage)}")
-    
+
     return performance, avg_profit_percentage
 
 # 반성 생성
@@ -274,7 +277,7 @@ def generate_reflection(performance, strategies, trades, avg_profit, previous_re
     messages = [
         {
             "role": "system",
-            "content": f"You are an AI trading assistant tasked with analyzing trading performance over the past week and providing a reflection. Consider the following strategies:\n\n{strategies}\n\nAnalyze the performance data and trades, then provide insights on what went well, what could be improved, and how to adjust the strategy for better future performance. Be concise but insightful. Consider the average profit of {avg_profit:.2f}% over the past week. Also, consider these previous reflections:\n\n{previous_reflections_text}"
+            "content": f"You are an AI trading assistant tasked with analyzing trading performance over the past 5 trades and providing a reflection. Consider the following strategies:\n\n{strategies}\n\nAnalyze the performance data and trades, then provide insights on what went well, what could be improved, and how to adjust the strategy for better future performance. Be concise but insightful. Consider the average profit of {avg_profit:.2f}% over the past 5 trades. Also, consider these previous reflections:\n\n{previous_reflections_text}"
         },
         {
             "role": "user",
