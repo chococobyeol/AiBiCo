@@ -566,6 +566,7 @@ IMPORTANT RULES:
 1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead, but specify another reason if one exists.
 2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead, but specify another reason if one exists.
 3. If insufficient balance is not the primary reason for the 'hold' decision, clearly state the main reason for the decision rather than mentioning the balance.
+4. Do not mention specific asset amounts or balances in the reflection.
 
 Here are additional indicators that should be considered:
 - Bollinger Bands (daily): {daily_indicators.get('bb_bbm', None)}, {daily_indicators.get('bb_bbh', None)}, {daily_indicators.get('bb_bbl', None)}
