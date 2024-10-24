@@ -293,7 +293,8 @@ Analyze the performance data and trades, then provide insights on what went well
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
-        max_tokens=500
+        max_tokens=500,
+        temperature=1.2
     )
 
     return response.choices[0].message.content.strip()
@@ -401,7 +402,8 @@ Reflection to summarize: {new_reflection}"""
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
-        max_tokens=300
+        max_tokens=500,
+        temperature=1.2
     )
 
     updated_summary = response.choices[0].message.content.strip()
@@ -590,6 +592,7 @@ The trading interval can be adjusted between 10 minutes (for very short-term tra
 Provide a short-term trading necessity score from 0.00 to 1.00, where:
 0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
 1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
+Avoid using the same numbers as previous trades and use different numbers according to various situations.
 
 Make sure the score uses small, precise increments such as 0.01, 0.02, 0.03, or other fine adjustments to ensure continuous and detailed assessment based on all factors."""
 
@@ -653,7 +656,8 @@ Current BTC balance: {current_status['btc_balance']}
                         "required": ["decision", "percentage", "reason", "short_term_necessity"]
                     }
                 }],
-                function_call={"name": "make_trading_decision"}
+                function_call={"name": "make_trading_decision"},
+                temperature=1.2
             )
 
             function_call = response.choices[0].message.function_call
