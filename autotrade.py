@@ -265,7 +265,20 @@ def generate_reflection(performance, strategies, trades, avg_profit, previous_re
     messages = [
         {
             "role": "system",
-            "content": f"You are an AI trading assistant tasked with analyzing trading performance over the past 5 trades and providing a reflection. Consider the following strategies:\n\n{strategies}\n\nAnalyze the performance data and trades, then provide insights on what went well, what could be improved, and how to adjust the strategy for better future performance. Be concise but insightful. Consider the average profit of {avg_profit:.2f}% over the past 5 trades. Also, consider these previous reflections:\n\n{previous_reflections_text}"
+            "content": f"""You are an AI trading assistant tasked with analyzing trading performance over the past 5 trades and providing a reflection. Consider the following strategies:
+
+{strategies}
+
+When analyzing performance and providing reflections:
+1. Do not mention specific asset amounts or balances
+2. Use percentage changes and relative terms instead of absolute values
+3. Focus on strategy effectiveness, market conditions, and decision rationale
+4. Describe profit/loss in terms of percentage changes
+5. Use general terms like "portfolio value", "position size" instead of specific amounts
+
+Analyze the performance data and trades, then provide insights on what went well, what could be improved, and how to adjust the strategy for better future performance. Be concise but insightful. Consider the average profit of {avg_profit:.2f}% over the past 5 trades. Also, consider these previous reflections:
+
+{previous_reflections_text}"""
         },
         {
             "role": "user",
@@ -349,7 +362,7 @@ def get_news():
 
     return cleaned_news[:3]  # 뉴스 헤드라인 수를 3개로 제한
 
-# 반성 요약 가져��기
+# 반성 요약 가져기
 def get_reflection_summary(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT summary FROM reflection_summary ORDER BY timestamp DESC LIMIT 1")
@@ -358,9 +371,27 @@ def get_reflection_summary(conn):
 
 def update_reflection_summary(conn, new_reflection, previous_summary):
     if previous_summary:
-        prompt = f"Previous summary: {previous_summary}\n\nNew reflection to incorporate: {new_reflection}\n\nCreate an updated summary that incorporates the new reflection into the previous summary. The summary should maintain key insights from the previous summary while adding new insights from the latest reflection. Keep the summary concise but insightful."
+        prompt = f"""Previous summary: {previous_summary}
+
+New reflection to incorporate: {new_reflection}
+
+Create an updated summary that incorporates the new reflection into the previous summary while following these guidelines:
+1. Never mention specific asset amounts or balances
+2. Use percentage changes and relative terms instead of absolute values
+3. Focus on strategy effectiveness and market conditions
+4. Describe profit/loss in terms of percentage changes
+5. Use general terms like "portfolio value", "position size" instead of specific amounts
+
+Keep the summary concise but insightful."""
     else:
-        prompt = f"Create a summary of the following reflection: {new_reflection}"
+        prompt = f"""Create a summary of the following reflection while following these guidelines:
+1. Never mention specific asset amounts or balances
+2. Use percentage changes and relative terms instead of absolute values
+3. Focus on strategy effectiveness and market conditions
+4. Describe profit/loss in terms of percentage changes
+5. Use general terms like "portfolio value", "position size" instead of specific amounts
+
+Reflection to summarize: {new_reflection}"""
 
     messages = [
         {"role": "system", "content": "You are an AI assistant tasked with summarizing trading reflections."},
