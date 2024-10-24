@@ -512,9 +512,13 @@ def ai_trading():
             }
 
         chart_data = get_simplified_chart_data()
+        autotrade_logger.info(f"Chart data: {chart_data}")
         fear_greed_index = get_fear_and_greed_index()
+        autotrade_logger.info(f"Fear and Greed Index: {fear_greed_index}")
         volatility_data = get_volatility_data()
+        autotrade_logger.info(f"Volatility data: {volatility_data}")
         news = get_news()
+        autotrade_logger.info(f"News: {news}")
 
         # ** 추가된 지표 사용을 위한 데이터 준비 **
         daily_indicators = chart_data['daily']
@@ -543,10 +547,14 @@ def ai_trading():
                            cumulative_reflection="Starting trading")
 
             recent_trades = get_recent_trades(conn, days=7, limit=5)
+            autotrade_logger.info(f"Recent trades: {recent_trades}")
             current_price = pyupbit.get_current_price("KRW-BTC")
             performance, avg_profit = analyze_performance(recent_trades, current_price)
+            autotrade_logger.info(f"Performance: {performance}, Average profit: {avg_profit}")
             strategies = read_strategies()
+            autotrade_logger.info(f"Strategies: {strategies}")
             previous_summary = get_reflection_summary(conn)
+            autotrade_logger.info(f"Previous reflection summary: {previous_summary}")
 
             if len(recent_trades) >= 5:
                 last_five_trades = recent_trades[:5]
@@ -554,7 +562,9 @@ def ai_trading():
             else:
                 reflection = generate_reflection(performance, strategies, recent_trades, avg_profit, [])
 
+            autotrade_logger.info(f"Generated reflection: {reflection}")
             updated_summary = update_reflection_summary(conn, reflection, previous_summary)
+            autotrade_logger.info(f"Updated reflection summary: {updated_summary}")
 
             current_btc_balance = current_status['btc_balance']
 
@@ -599,14 +609,22 @@ Make sure the score uses small, precise increments such as 0.01, 0.02, 0.03, or 
 
             # ** 추가된 지표들을 JSON으로 직렬화 **
             current_status_serializable = prepare_data_for_api(current_status)
+            autotrade_logger.info(f"Current status serializable: {current_status_serializable}")
             orderbook_serializable = prepare_data_for_api(orderbook)
+            autotrade_logger.info(f"Orderbook serializable: {orderbook_serializable}")
             chart_data_serializable = chart_data  # 이미 직렬화된 상태
+            autotrade_logger.info(f"Chart data serializable: {chart_data_serializable}")
             fear_greed_index_serializable = prepare_data_for_api(fear_greed_index)
+            autotrade_logger.info(f"Fear and Greed Index serializable: {fear_greed_index_serializable}")
             volatility_data_serializable = prepare_data_for_api(volatility_data)
+            autotrade_logger.info(f"Volatility data serializable: {volatility_data_serializable}")
             news_serializable = prepare_data_for_api(news)
+            autotrade_logger.info(f"News serializable: {news_serializable}")
             recent_trades_serializable = prepare_data_for_api(recent_trades)
+            autotrade_logger.info(f"Recent trades serializable: {recent_trades_serializable}")
 
             avg_profit_serializable = float(avg_profit)
+            autotrade_logger.info(f"Average profit serializable: {avg_profit_serializable}")
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -1084,20 +1102,3 @@ if __name__ == "__main__":
         if os.path.exists(lockfile):
             os.remove(lockfile)
         autotrade_logger.info("Autotrade 스크립트 종료.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
