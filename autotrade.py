@@ -559,8 +559,9 @@ def ai_trading():
             current_btc_balance = current_status['btc_balance']
 
             # ** 시스템 메시지에 추가 지표 포함 **
-            system_message = f"""You are an AI trading assistant. Analyze the given market data and make a trading decision(buy, sell, hold).
+            system_message = f"""You are a proficient Bitcoin trading expert. Analyze the given market data and make a trading decision(buy, sell, hold).
 Consider the following reflection summary on recent performance:\n\n{updated_summary}
+The reason should clearly state the main rationale for the trading decision and explain why other options were not chosen. For instance, if a hold decision is made, it should clarify why a sell decision was not selected.
 Current BTC balance: {current_status['btc_balance']}
 Current KRW balance: {current_status['krw_balance']}
 
