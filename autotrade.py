@@ -532,9 +532,9 @@ Current BTC balance: {current_status['btc_balance']}
 Current KRW balance: {current_status['krw_balance']}
 
 IMPORTANT RULES:
-1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead.
-2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead.
-3. If the insufficient balance is not the primary factor in the 'hold' decision, write the primary reason for the decision in the 'reason', not the insufficient balance.
+1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead, but specify another reason if one exists.
+2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead, but specify another reason if one exists.
+3. If insufficient balance is not the primary reason for the 'hold' decision, clearly state the main reason for the decision rather than mentioning the balance.
 
 Here are additional indicators that should be considered:
 - Bollinger Bands (daily): {daily_indicators.get('bb_bbm', None)}, {daily_indicators.get('bb_bbh', None)}, {daily_indicators.get('bb_bbl', None)}
@@ -547,14 +547,19 @@ Here are additional indicators that should be considered:
 - 10-minute MACD: {ten_min_indicators.get('macd', None)}, Signal: {ten_min_indicators.get('macd_signal', None)}, Diff: {ten_min_indicators.get('macd_diff', None)}
 - 10-minute Bollinger Bands: {ten_min_indicators.get('bb_bbm', None)}, {ten_min_indicators.get('bb_bbh', None)}, {ten_min_indicators.get('bb_bbl', None)}
 
-Additionally, evaluate the necessity for short-term trading based on current market conditions. Take into account the recent price trends, trading volume, and market volatility. 
-Analyze the potential impacts of the latest news on market sentiment and identify any emerging patterns or anomalies in the data.
+Additionally, evaluate the necessity for short-term trading based on current market conditions:
+- **Volatility**: If ATR is high or Bollinger Bands are wide, adjust the score incrementally, e.g., +0.01 for small changes and +0.03 for larger changes.
+- **Momentum**: If MACD and RSI show strong trends, increase the necessity score more finely, e.g., in increments of +0.02 to +0.04.
+- **Reversal Signals**: If RSI is overbought/oversold or Stochastic Oscillator indicates a potential reversal, adjust the score by small increments, reflecting subtle changes.
+- **Recent News Sentiment**: If news suggests major sentiment changes, adjust the score based on the sentiment impact, e.g., +0.01 to +0.05 depending on the strength of the news.
+- **Volume**: If OBV or volume spikes are detected, increase short-term trading necessity in smaller increments based on the volume percentage increase.
+
 The trading interval can be adjusted between 10 minutes (for very short-term trading) and 8 hours (for longer-term trading).
 Provide a short-term trading necessity score from 0.00 to 1.00, where:
 0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
 1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
-Use a precise two-decimal score (e.g., 0.23, 0.84, 0.51) to accurately reflect the current market conditions.
-Avoid using rounded values like 0.10, 0.25, 0.50, etc. Instead, provide a more nuanced assessment."""
+
+Make sure the score uses small, precise increments such as 0.01, 0.02, 0.03, or other fine adjustments to ensure continuous and detailed assessment based on all factors."""
 
             # ** 추가된 지표들을 JSON으로 직렬화 **
             current_status_serializable = prepare_data_for_api(current_status)
@@ -837,11 +842,11 @@ def check_market_conditions():
         return False
 
     # 변동성 조건 확인
-    volatility_condition_1 = ten_min_volatility > short_term_volatility * 1.5
+    volatility_condition_1 = ten_min_volatility > short_term_volatility * 2
     volatility_condition_2 = ten_min_volatility > current_volatility * 3
 
     # 거래량 조건 확인
-    volume_condition_1 = ten_min_volume > (avg_volume_24h / 6) * 1.5
+    volume_condition_1 = ten_min_volume > (avg_volume_24h / 6) * 2
     volume_condition_2 = ten_min_volume > (avg_volume_14d / 144) * 3
 
     # 종합 조건 확인
@@ -853,9 +858,9 @@ def check_market_conditions():
     autotrade_logger.info(f"10-min volume: {ten_min_volume:.2f}")
     autotrade_logger.info(f"Avg 24-hour volume: {avg_volume_24h:.2f}")
     autotrade_logger.info(f"Avg 14-day volume: {avg_volume_14d:.2f}")
-    autotrade_logger.info(f"Volatility condition 1 (10-min > 24-hour * 1.5): {volatility_condition_1}")
+    autotrade_logger.info(f"Volatility condition 1 (10-min > 24-hour * 2): {volatility_condition_1}")
     autotrade_logger.info(f"Volatility condition 2 (10-min > 14-day * 3): {volatility_condition_2}")
-    autotrade_logger.info(f"Volume condition 1 (10-min > 24-hour/6 * 1.5): {volume_condition_1}")
+    autotrade_logger.info(f"Volume condition 1 (10-min > 24-hour/6 * 2): {volume_condition_1}")
     autotrade_logger.info(f"Volume condition 2 (10-min > 14-day/144 * 3): {volume_condition_2}")
     autotrade_logger.info(f"Market condition: {market_condition}")
 
