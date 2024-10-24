@@ -352,7 +352,7 @@ def get_news():
 # 반성 요약 가져��기
 def get_reflection_summary(conn):
     cursor = conn.cursor()
-    cursor.execute("SELECT summary FROM reflection_summary ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT summary FROM reflection_summary ORDER BY timestamp DESC LIMIT 1")
     result = cursor.fetchone()
     return result[0] if result else None
 
@@ -509,7 +509,7 @@ def ai_trading():
                            reflection="Initial trade data",
                            cumulative_reflection="Starting trading")
 
-            recent_trades = get_recent_trades(conn, limit=5)
+            recent_trades = get_recent_trades(conn, days=7, limit=5)
             current_price = pyupbit.get_current_price("KRW-BTC")
             performance, avg_profit = analyze_performance(recent_trades, current_price)
             strategies = read_strategies()
