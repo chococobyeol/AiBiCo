@@ -559,7 +559,7 @@ def ai_trading():
             current_btc_balance = current_status['btc_balance']
 
             # ** 시스템 메시지에 추가 지표 포함 **
-            system_message = f"""You are an AI trading assistant. Analyze the given market data and make a trading decision.
+            system_message = f"""You are an AI trading assistant. Analyze the given market data and make a trading decision(buy, sell, hold).
 Consider the following reflection summary on recent performance:\n\n{updated_summary}
 Current BTC balance: {current_status['btc_balance']}
 Current KRW balance: {current_status['krw_balance']}
@@ -592,7 +592,7 @@ The trading interval can be adjusted between 10 minutes (for very short-term tra
 Provide a short-term trading necessity score from 0.00 to 1.00, where:
 0.00: No need for short-term trading, prefer longer intervals (closer to 8 hours)
 1.00: High necessity for short-term trading, prefer shorter intervals (closer to 10 minutes)
-Avoid using the same numbers as previous trades and use different numbers according to various situations.
+AVOID using the same numbers as previous trades and use different numbers according to various situations.
 
 Make sure the score uses small, precise increments such as 0.01, 0.02, 0.03, or other fine adjustments to ensure continuous and detailed assessment based on all factors."""
 
