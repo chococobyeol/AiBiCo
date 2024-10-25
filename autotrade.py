@@ -737,7 +737,8 @@ Current BTC balance: {current_status['btc_balance']}
                            reflection=message,
                            cumulative_reflection=updated_summary,
                            short_term_necessity=short_term_necessity)
-                return {'short_term_necessity': short_term_necessity}  # 여기서 함수 종료
+                # 거래 실패 시 빠른 재시도를 위해 short_term_necessity를 1.0으로 설정
+                return {'short_term_necessity': 1.0, 'trade_failed': True}  # 실패 상태 추가
             else:
                 try:
                     if decision == 'buy':
@@ -800,6 +801,8 @@ Current BTC balance: {current_status['btc_balance']}
                                reflection="Trade execution failed",
                                cumulative_reflection=updated_summary,
                                short_term_necessity=short_term_necessity)
+                    # 거래 실패 시 빠른 재시도를 위해 short_term_necessity를 1.0으로 설정
+                    return {'short_term_necessity': 1.0, 'trade_failed': True}  # 실패 상태 추가
         else:
             autotrade_logger.info(f"Decision: Hold. Reason: {reason}")
             save_trade(conn,
@@ -1080,33 +1083,45 @@ if __name__ == "__main__":
                     trade_result = ai_trading()
                     last_trade_time = datetime.now()
                     short_term_necessity = trade_result.get('short_term_necessity', 0.5)
+                    trade_failed = trade_result.get('trade_failed', False)  # 거래 실패 여부 확인
 
-                    volatility = check_market_volatility()
-                    volume = check_trading_volume()
+                    # 거래 실패 시 1분 후에 재시도
+                    if trade_failed:
+                        interval = 60  # 1분
+                    else:
+                        interval = calculate_trading_interval(short_term_necessity)
 
-                    interval = calculate_trading_interval(short_term_necessity)
                     next_trade_time = current_time + timedelta(seconds=interval)
                     save_next_trade_time(next_trade_time)
                     save_last_trade_time(last_trade_time)
 
                     autotrade_logger.info(f"Trade decision made at: {current_time}")
-                    autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+                    if trade_failed:
+                        autotrade_logger.info(f"Trade failed. Retrying in 1 minute at {next_trade_time}")
+                    else:
+                        autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
                 else:
                     if check_market_conditions() and time_since_last_trade >= MIN_TRADE_INTERVAL:
                         trade_result = ai_trading()
                         last_trade_time = datetime.now()
                         short_term_necessity = trade_result.get('short_term_necessity', 0.5)
+                        trade_failed = trade_result.get('trade_failed', False)  # 거래 실패 여부 확인
 
-                        volatility = check_market_volatility()
-                        volume = check_trading_volume()
+                        # 거래 실패 시 1분 후에 재시도
+                        if trade_failed:
+                            interval = 60  # 1분
+                        else:
+                            interval = calculate_trading_interval(short_term_necessity)
 
-                        interval = calculate_trading_interval(short_term_necessity)
                         next_trade_time = current_time + timedelta(seconds=interval)
                         save_next_trade_time(next_trade_time)
                         save_last_trade_time(last_trade_time)
 
                         autotrade_logger.info(f"Market conditions met. Trade decision made at: {current_time}")
-                        autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
+                        if trade_failed:
+                            autotrade_logger.info(f"Trade failed. Retrying in 1 minute at {next_trade_time}")
+                        else:
+                            autotrade_logger.info(f"Next trade scheduled in {interval/60:.2f} minutes at {next_trade_time}")
                     else:
                         autotrade_logger.info(f"Next trade check in {time_until_next_trade/60:.2f} minutes at {next_trade_time}")
 
