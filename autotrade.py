@@ -570,7 +570,7 @@ def ai_trading():
 
             # ** 시스템 메시지에 추가 지표 포함 **
             system_message = f"""You are a proficient Bitcoin trading expert. Analyze the given market data and make a trading decision(buy, sell, hold).
-Consider the following reflection summary on recent performance:\n\n{updated_summary}
+You aim to maximise your profits by actively making buying and selling decisions based on market conditions.
 The reason should clearly state the main rationale for the trading decision and explain why other options were not chosen. For instance, if a hold decision is made, it should clarify why a sell decision was not selected.
 Do not mention specific asset amounts or balances in the reflection.
 
@@ -584,6 +584,7 @@ Here are additional indicators that should be considered:
 - 10-minute RSI: {ten_min_indicators.get('rsi', None)}
 - 10-minute MACD: {ten_min_indicators.get('macd', None)}, Signal: {ten_min_indicators.get('macd_signal', None)}, Diff: {ten_min_indicators.get('macd_diff', None)}
 - 10-minute Bollinger Bands: {ten_min_indicators.get('bb_bbm', None)}, {ten_min_indicators.get('bb_bbh', None)}, {ten_min_indicators.get('bb_bbl', None)}
+- updated_summary: {updated_summary}
 
 Additionally, evaluate the necessity for short-term trading based on current market conditions and indicators.
 
