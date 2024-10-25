@@ -572,14 +572,7 @@ def ai_trading():
             system_message = f"""You are a proficient Bitcoin trading expert. Analyze the given market data and make a trading decision(buy, sell, hold).
 Consider the following reflection summary on recent performance:\n\n{updated_summary}
 The reason should clearly state the main rationale for the trading decision and explain why other options were not chosen. For instance, if a hold decision is made, it should clarify why a sell decision was not selected.
-Current BTC balance: {current_status['btc_balance']}
-Current KRW balance: {current_status['krw_balance']}
-
-IMPORTANT RULES:
-1. If the current KRW balance is less than {MIN_TRADE_AMOUNT_WITH_FEE:.2f} KRW (including trading fee), do not make a 'buy' decision. Choose 'hold' instead, but specify another reason if one exists.
-2. If the current BTC balance is 0, do not make a 'sell' decision. Choose 'hold' instead, but specify another reason if one exists.
-3. If insufficient balance is not the primary reason for the 'hold' decision, clearly state the main reason for the decision rather than mentioning the balance.
-4. Do not mention specific asset amounts or balances in the reflection.
+Do not mention specific asset amounts or balances in the reflection.
 
 Here are additional indicators that should be considered:
 - Bollinger Bands (daily): {daily_indicators.get('bb_bbm', None)}, {daily_indicators.get('bb_bbh', None)}, {daily_indicators.get('bb_bbl', None)}
