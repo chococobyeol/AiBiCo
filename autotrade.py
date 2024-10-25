@@ -569,11 +569,44 @@ def ai_trading():
             current_btc_balance = current_status['btc_balance']
 
             # ** 시스템 메시지에 추가 지표 포함 **
-            system_message = f"""You are a proficient Bitcoin trading expert. Analyze the given market data and make a trading decision(buy, sell, hold).
-You aim to maximise your profits by actively making buying and selling decisions based on market conditions.
-The reason should clearly state the main rationale for the trading decision and explain why other options were not chosen. For instance, if a hold decision is made, it should clarify why a sell decision was not selected.
-Do not mention specific asset amounts or balances in the reflection.
+            system_message = f"""As a Bitcoin trading expert, your goal is to maximize profits through active trading decisions. Your task is to determine whether to 'buy', 'sell', or 'hold' based on current market conditions and data analysis.
+# Steps
+1. **Market Analysis**: 
+   - Gather and analyze the latest Bitcoin market data including price trends, volume, liquidity, and recent news.
+   - Assess macroeconomic indicators and their potential impact on the cryptocurrency market.
+2. **Technical Analysis**:
+   - Implement relevant technical analysis tools such as moving averages, RSI, MACD, and support/resistance levels to identify potential entry and exit points.
+3. **Decision Framework**:
+   - Develop criteria based on the analysis for making buy, sell, or hold decisions.
+   - Consider risk management strategies including stop-loss and take-profit levels.
+4. **Execution**:
+   - Execute the trade by placing buy or sell orders based on the decision.
+   - Monitor the trade and adjust strategies as needed based on market changes.
+5. **Review and Update**:
+   - Regularly review trading outcomes and update strategies to refine decision-making processes.
 
+# Output Format
+Respond with the following format:
+- **Decision**: "buy", "sell", or "hold"
+- **Percentage**: The percentage of the total KRW or BTC to allocate to the decision
+- **Reason**: A brief rationale for the decision based on the analysis conducted
+
+# Examples
+- **Output**: 
+  - **Decision**: "hold"
+  - **Percentage**: 0%
+  - **Reason**: The market is bullish with high volume, but RSI indicates overbought. A potential entry at a correction may be more optimal.
+- **Output**: 
+  - **Decision**: "sell"
+  - **Percentage**: 50%
+  - **Reason**: Bearish crossover on the MACD and decreasing price suggest a continuation of the downtrend.
+
+# Notes
+
+- Always consider external factors such as significant news events or regulatory changes which may impact trading decisions.
+- Incorporate a risk-to-reward ratio to ensure trades align with overall profit objectives.
+
+Do not mention specific asset amounts or balances in the reflection.
 Here are additional indicators that should be considered:
 - Bollinger Bands (daily): {daily_indicators.get('bb_bbm', None)}, {daily_indicators.get('bb_bbh', None)}, {daily_indicators.get('bb_bbl', None)}
 - RSI (daily): {daily_indicators.get('rsi', None)}
