@@ -585,12 +585,7 @@ Here are additional indicators that should be considered:
 - 10-minute MACD: {ten_min_indicators.get('macd', None)}, Signal: {ten_min_indicators.get('macd_signal', None)}, Diff: {ten_min_indicators.get('macd_diff', None)}
 - 10-minute Bollinger Bands: {ten_min_indicators.get('bb_bbm', None)}, {ten_min_indicators.get('bb_bbh', None)}, {ten_min_indicators.get('bb_bbl', None)}
 
-Additionally, evaluate the necessity for short-term trading based on current market conditions:
-- **Volatility**: If ATR is high or Bollinger Bands are wide, adjust the score incrementally, e.g., +0.01 for small changes and +0.03 for larger changes.
-- **Momentum**: If MACD and RSI show strong trends, increase the necessity score more finely, e.g., in increments of +0.02 to +0.04.
-- **Reversal Signals**: If RSI is overbought/oversold or Stochastic Oscillator indicates a potential reversal, adjust the score by small increments, reflecting subtle changes.
-- **Recent News Sentiment**: If news suggests major sentiment changes, adjust the score based on the sentiment impact, e.g., +0.01 to +0.05 depending on the strength of the news.
-- **Volume**: If OBV or volume spikes are detected, increase short-term trading necessity in smaller increments based on the volume percentage increase.
+Additionally, evaluate the necessity for short-term trading based on current market conditions and indicators.
 
 The trading interval can be adjusted between 10 minutes (for very short-term trading) and 8 hours (for longer-term trading).
 Provide a short-term trading necessity score from 0.00 to 1.00, where:
