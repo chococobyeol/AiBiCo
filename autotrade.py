@@ -602,9 +602,9 @@ Respond with the following format:
   - **Reason**: Bearish crossover on the MACD and decreasing price suggest a continuation of the downtrend.
 
 # Notes
-
 - Always consider external factors such as significant news events or regulatory changes which may impact trading decisions.
 - Incorporate a risk-to-reward ratio to ensure trades align with overall profit objectives.
+- If the previous trade was a failure, analyze the previous reflection to identify the cause and adjust the decision and percentage to avoid another failure.
 
 Do not mention specific asset amounts or balances in the reflection.
 Here are additional indicators that should be considered:
