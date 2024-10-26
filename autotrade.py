@@ -605,8 +605,8 @@ Respond with the following format:
 - Always consider external factors such as significant news events or regulatory changes which may impact trading decisions.
 - Incorporate a risk-to-reward ratio to ensure trades align with overall profit objectives.
 - If the previous trade was a failure, analyze the previous reflection to identify the cause and adjust the decision and percentage to avoid another failure.
-- IF THE CURRENT AMOUNT TO BUY IS LESS THAN {current_status['KRW_BALANCE']} < {MIN_TRADE_AMOUNT_WITH_FEE}, DECIDE TO HOLD INSTEAD OF BUYING TO AVOID FAILURE.
-- IF THE CURRENT AMOUNT TO SELL IS LESS THAN {current_status['BTC_BALANCE']} < 0.00005 BTC, DECIDE TO HOLD INSTEAD OF SELLING TO AVOID FAILURE.
+- IF THE CURRENT AMOUNT TO BUY IS LESS THAN {current_status['krw_balance']} < {MIN_TRADE_AMOUNT_WITH_FEE}, DECIDE TO HOLD INSTEAD OF BUYING TO AVOID FAILURE.
+- IF THE CURRENT AMOUNT TO SELL IS LESS THAN {current_status['btc_balance']} < 0.00005 BTC, DECIDE TO HOLD INSTEAD OF SELLING TO AVOID FAILURE.
 
 Do not mention specific asset amounts or balances in the reflection.
 Here are additional indicators that should be considered:
