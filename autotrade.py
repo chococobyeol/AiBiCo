@@ -605,7 +605,7 @@ Respond with the following format:
 - Always consider external factors such as significant news events or regulatory changes which may impact trading decisions.
 - Incorporate a risk-to-reward ratio to ensure trades align with overall profit objectives.
 - If the previous trade was a failure, analyze the previous reflection to identify the cause and adjust the decision and percentage to avoid another failure.
-- Ensure that trades are not made below the minimum order amount. Minimum trade amount: 5,000 KRW or 0.00005 BTC.
+- ADJUST THE DECISION PERCENTAGE BASED ON THE CURRENT ASSET STATUS TO ENSURE TRADES DO NOT FAIL DUE TO THE MINIMUM TRADE AMOUNT RESTRICTION. MINIMUM TRADE AMOUNT: 5,000 KRW OR 0.00005 BTC.
 
 Do not mention specific asset amounts or balances in the reflection.
 Here are additional indicators that should be considered:
