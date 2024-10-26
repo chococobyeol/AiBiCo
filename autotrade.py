@@ -588,7 +588,7 @@ def ai_trading():
 # Output Format
 Respond with the following format:
 - **Decision**: "buy", "sell", or "hold"
-- **Percentage**: The percentage of the total KRW or BTC to allocate to the decision
+- **Percentage**: The percentage of the current KRW or BTC balance to trade.(0% to 100%)
 - **Reason**: A brief rationale for the decision based on the analysis conducted
 
 # Examples
