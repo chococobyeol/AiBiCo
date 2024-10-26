@@ -605,8 +605,8 @@ Respond with the following format:
 - Always consider external factors such as significant news events or regulatory changes which may impact trading decisions.
 - Incorporate a risk-to-reward ratio to ensure trades align with overall profit objectives.
 - If the previous trade was a failure, analyze the previous reflection to identify the cause and adjust the decision and percentage to avoid another failure.
-- ADJUST THE DECISION PERCENTAGE BASED ON THE CURRENT ASSET STATUS TO ENSURE TRADES DO NOT FAIL DUE TO THE MINIMUM TRADE AMOUNT RESTRICTION. MINIMUM TRADE AMOUNT: 5,000 KRW OR 0.00005 BTC. FOR EXAMPLE, IF THE PREVIOUS REFLECTION MESSAGE WAS "Sell order amount too small. Minimum trade amount: 5000 KRW", CHECK THE CURRENT KRW BALANCE AND ENSURE TO SELL AN AMOUNT GREATER THAN 5000 KRW OR DO NOT SELL AT ALL. 
-- You do realise that when the current KRW balance is around 5000, you need to sell 100% to get 5000, right? Not 0.5%?
+- IF THE CURRENT AMOUNT TO BUY IS LESS THAN {current_status['KRW_BALANCE']} < {MIN_TRADE_AMOUNT_WITH_FEE}, DECIDE TO HOLD INSTEAD OF BUYING TO AVOID FAILURE.
+- IF THE CURRENT AMOUNT TO SELL IS LESS THAN {current_status['BTC_BALANCE']} < 0.00005 BTC, DECIDE TO HOLD INSTEAD OF SELLING TO AVOID FAILURE.
 
 Do not mention specific asset amounts or balances in the reflection.
 Here are additional indicators that should be considered:
