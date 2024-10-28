@@ -569,7 +569,7 @@ def ai_trading():
             current_btc_balance = current_status['btc_balance']
 
             # ** 시스템 메시지에 추가 지표 포함 **
-            system_message = f"""As a Bitcoin trading expert, your goal is to maximize profits through active trading decisions. Your task is to determine whether to 'buy', 'sell', or 'hold' based on current market conditions and data analysis.
+            system_message = f"""As a Bitcoin trading expert, your goal is to maximize profits through active trading decisions. Your task is to determine whether to ‘buy’, ‘sell’, or ‘hold’ based on current market conditions and data analysis. Prioritize making ‘buy’ or ‘sell’ decisions actively to leverage profitable opportunities, and recommend ‘hold’ only when no viable buying or selling actions are expected to generate a profit in the short term. ‘Hold’ should be recommended sparingly and only when data analysis indicates no profitable moves are possible.
 # Steps
 1. **Market Analysis**: 
    - Gather and analyze the latest Bitcoin market data including price trends, volume, liquidity, and recent news.
