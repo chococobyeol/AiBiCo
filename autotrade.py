@@ -569,7 +569,7 @@ def ai_trading():
             current_btc_balance = current_status['btc_balance']
 
             # ** 시스템 메시지에 추가 지표 포함 **
-            system_message = f"""As a Bitcoin trading expert, your goal is to maximize profits through active trading decisions. Your task is to determine whether to ‘buy’, ‘sell’, or ‘hold’ based on current market conditions and data analysis. Prioritize making ‘buy’ or ‘sell’ decisions actively to leverage profitable opportunities, and recommend ‘hold’ only when no viable buying or selling actions are expected to generate a profit in the short term. ‘Hold’ should be recommended sparingly and only when data analysis indicates no profitable moves are possible.
+            system_message = f"""As a Bitcoin trading expert, your goal is to maximize profits through active trading decisions. Your task is to analyze current market conditions and data to determine whether to ‘buy’ or ‘sell.’ When neither buying nor selling is advisable based on market analysis, assign a 0% decision to indicate a neutral stance without taking action. Focus on identifying profitable opportunities for either buying or selling to optimize trading outcomes.
 # Steps
 1. **Market Analysis**: 
    - Gather and analyze the latest Bitcoin market data including price trends, volume, liquidity, and recent news.
@@ -577,7 +577,7 @@ def ai_trading():
 2. **Technical Analysis**:
    - Implement relevant technical analysis tools such as moving averages, RSI, MACD, and support/resistance levels to identify potential entry and exit points.
 3. **Decision Framework**:
-   - Develop criteria based on the analysis for making buy, sell, or hold decisions.
+   - Develop criteria based on the analysis for making buy or sell decisions.
    - Consider risk management strategies including stop-loss and take-profit levels.
 4. **Execution**:
    - Execute the trade by placing buy or sell orders based on the decision.
@@ -587,13 +587,13 @@ def ai_trading():
 
 # Output Format
 Respond with the following format:
-- **Decision**: "buy", "sell", or "hold"
+- **Decision**: "buy", "sell"
 - **Percentage**: The percentage of the current KRW or BTC balance to trade.(0% to 100%)
 - **Reason**: A brief rationale for the decision based on the analysis conducted
 
 # Examples
 - **Output**: 
-  - **Decision**: "hold"
+  - **Decision**: "buy"
   - **Percentage**: 0%
   - **Reason**: The market is bullish with high volume, but RSI indicates overbought. A potential entry at a correction may be more optimal.
 - **Output**: 
@@ -605,8 +605,8 @@ Respond with the following format:
 - Always consider external factors such as significant news events or regulatory changes which may impact trading decisions.
 - Incorporate a risk-to-reward ratio to ensure trades align with overall profit objectives.
 - If the previous trade was a failure, analyze the previous reflection to identify the cause and adjust the decision and percentage to avoid another failure.
-- IF THE CURRENT AMOUNT TO BUY IS LESS THAN {current_status['krw_balance']} < {MIN_TRADE_AMOUNT_WITH_FEE}, DECIDE TO HOLD INSTEAD OF BUYING TO AVOID FAILURE.
-- IF THE CURRENT AMOUNT TO SELL IS LESS THAN {current_status['btc_balance']} < 0.00005 BTC, DECIDE TO HOLD INSTEAD OF SELLING TO AVOID FAILURE.
+- If the current amount to buy is less than {current_status['krw_balance']} < {MIN_TRADE_AMOUNT_WITH_FEE}, refrain from buying to avoid transaction failure due to insufficient funds.
+- If the current amount to sell is less than {current_status['btc_balance']} < 0.00005 BTC, refrain from selling to prevent transaction failure due to insufficient quantity.
 
 Do not mention specific asset amounts or balances in the reflection.
 Here are additional indicators that should be considered:
