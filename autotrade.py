@@ -678,7 +678,7 @@ Current BTC balance: {current_status['btc_balance']}
                         "properties": {
                             "decision": {
                                 "type": "string",
-                                "enum": ["buy", "sell", "hold"],
+                                "enum": ["buy", "sell"], # delete hold decision
                                 "description": "The trading decision"
                             },
                             "percentage": {
