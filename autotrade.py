@@ -727,6 +727,9 @@ Current BTC balance: {current_status['btc_balance']}
             autotrade_logger.info("Decision changed to hold due to zero BTC balance")
 
         if decision != 'hold':
+            if percentage == 0:
+                autotrade_logger.info("Percentage is 0, no trade will be executed.")
+                return {'short_term_necessity': short_term_necessity, 'trade_failed': False}  # 거래 실패 아님
             balance_ok, message = check_balance_for_trade(upbit, decision, percentage)
             if not balance_ok:
                 autotrade_logger.warning(message)
